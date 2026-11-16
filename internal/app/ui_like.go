@@ -158,7 +158,7 @@ func (a *app) likeButton(c *ui.Context, tr *netease.Track, size float32, color u
 	return a.heartButton(c, tr, size, color, a.pal.accent, iconHeart, iconHeartFill)
 }
 
-func (a *app) heartButton(c *ui.Context, tr *netease.Track, size float32, color, likedColor ui.Color, outline, filled *ui.SVG) ui.Element {
+func (a *app) heartButton(c *ui.Context, tr *netease.Track, size float32, color, likedColor ui.Color, outline, filled *ui.SVG, counter ...string) ui.Element {
 	// A file on disk has no heart at NetEase.
 	if tr.LocalPath != "" {
 		return ui.Box(c).Size(size+16, size+16)
@@ -174,7 +174,13 @@ func (a *app) heartButton(c *ui.Context, tr *netease.Track, size float32, color,
 	// The burst goes on a wrapper, which the heart's pop does not scale.
 	wrap := ui.Box(c).Center()
 	var b ui.Element
-	wrap.Children(func() { b = iconButton(c, icon, size, color, label) })
+	wrap.Children(func() {
+		if len(counter) > 0 && counter[0] != "" {
+			b = songCounterButton(c, icon, size, color, label, counter[0])
+		} else {
+			b = iconButton(c, icon, size, color, label)
+		}
+	})
 	scale := b.AnimateTo("pop", 1, ui.Animation{Spring: ui.SpringOptions{Duration: 550 * time.Millisecond, Bounce: 0.55}})
 	b.Scale(scale, scale)
 	burst := ui.Local(wrap, "burst", func() time.Time { return time.Time{} })

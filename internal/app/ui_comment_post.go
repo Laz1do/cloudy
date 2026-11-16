@@ -217,26 +217,24 @@ func (a *app) commentCountButton(c *ui.Context, tr *netease.Track, size float32,
 	if cs := a.commentsFor(tr); cs.loaded {
 		n = cs.total
 	}
-	wrap := ui.Box(c).Width(size + max(40, size*1.25)).Height(size + 16).AlignItems(ui.Start)
-	wrap.Children(func() {
-		on := a.npPane == paneComments
-		tint := color
+	on := a.npPane == paneComments
+	tint := color
+	if on {
+		tint = white
+	}
+	caption := ""
+	if n > 0 {
+		caption = commentBadge(n)
+	}
+	button := songCounterButton(c.Key("comments"), iconComment, size, tint, "评论", caption)
+	if button.Clicked() {
 		if on {
-			tint = white
+			a.npPane = a.lyricsPaneChosen()
+		} else {
+			a.npPane = paneComments
 		}
-		if iconButton(c.Key("comments"), iconComment, size*0.9, tint, "评论").Clicked() {
-			if on {
-				a.npPane = a.lyricsPaneChosen()
-			} else {
-				a.npPane = paneComments
-			}
-		}
-		if n > 0 {
-			ui.Text(c.Key("comment-count"), commentBadge(n)).FontSize(max(10, size*0.46)).FontWeight(700).FontFeatures("tnum").
-				TextColor(tint).Absolute().Top(-2).Left(8 + size*0.84).SingleLine().PassThrough()
-		}
-	})
-	return wrap
+	}
+	return button
 }
 
 // commentBadge is a count as NetEase's apps show one by a button: up to
@@ -265,24 +263,33 @@ func (a *app) barCommentButton(c *ui.Context, tr *netease.Track, size float32, c
 	if cs := a.commentsFor(tr); cs.loaded {
 		n = cs.total
 	}
-	width := size + 16
-	if showCount {
-		width = size + max(40, size*1.6)
+	caption := ""
+	if n > 0 && showCount {
+		caption = commentBadge(n)
 	}
-	wrap := ui.Box(c).Width(width).Height(size + 16).AlignItems(ui.Start)
-	wrap.Children(func() {
-		button := iconButton(c.Key("comments"), iconComment, size*0.9, color, "评论")
-		if cs := a.commentsFor(tr); cs.loaded {
-			button.Tooltip(fmt.Sprintf("%d 条评论", cs.total))
-		}
-		if button.Clicked() {
-			a.npPane = paneComments
-			a.nowPlaying = true
-		}
-		if n > 0 && showCount {
-			ui.Text(c.Key("comment-count"), commentBadge(n)).FontSize(max(10, size*0.46)).FontWeight(700).FontFeatures("tnum").
-				TextColor(color).Absolute().Top(-1).Left(8 + size*0.84).SingleLine().PassThrough()
-		}
+	button := songCounterButton(c.Key("comments"), iconComment, size, color, "评论", caption)
+	if cs := a.commentsFor(tr); cs.loaded {
+		button.Tooltip(fmt.Sprintf("%d 条评论", cs.total))
+	}
+	if button.Clicked() {
+		a.npPane = paneComments
+		a.nowPlaying = true
+	}
+	return button
+}
+
+// songCounterButton includes the icon and count in one circular hit target.
+// Without a visible count it keeps the compact bar's original dimensions.
+func songCounterButton(c *ui.Context, icon *ui.SVG, size float32, color ui.Color, label, caption string) ui.Element {
+	if caption == "" {
+		return iconButton(c, icon, size, color, label)
+	}
+	diameter := size + 24
+	b := roundButton(c, diameter-16, color, label)
+	b.Children(func() {
+		ui.Text(c.Key("count"), caption).FontSize(10).FontWeight(700).FontFeatures("tnum").Absolute().Top(6).Left(5).Width(diameter - 10).TextAlign(ui.Center).SingleLine().PassThrough()
+		glyph := size * 0.82
+		ui.Icon(c, icon).Size(glyph, glyph).Absolute().Left((diameter - glyph) / 2).Bottom(7).PassThrough()
 	})
-	return wrap
+	return b
 }

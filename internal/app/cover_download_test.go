@@ -135,7 +135,7 @@ func coverMenuApp(nowPlaying bool) (*app, *ui.Tester) {
 	return a, tt
 }
 
-// Both covers and both three-dot buttons save the song the menu opened
+// The expanded cover and both three-dot buttons save the song the menu opened
 // for, even if playback changes before the action is chosen.
 func TestCoverDownloadMenus(t *testing.T) {
 	old := exportCover
@@ -144,7 +144,7 @@ func TestCoverDownloadMenus(t *testing.T) {
 		label      string
 		now, right bool
 	}{
-		{"播放栏封面", false, true}, {"专辑封面", true, true},
+		{"专辑封面", true, true},
 		{"歌曲详情", false, false}, {"更多", true, false},
 	} {
 		t.Run(tc.label, func(t *testing.T) {
@@ -218,6 +218,9 @@ func TestCoverDownloadFrames(t *testing.T) {
 	}
 	for _, now := range []bool{false, true} {
 		for _, right := range []bool{false, true} {
+			if right && !now {
+				continue
+			}
 			_, tt := coverMenuApp(now)
 			tt.SetDark(now)
 			tt.Frame()
@@ -250,5 +253,25 @@ func TestCoverDownloadFrames(t *testing.T) {
 				t.Fatal(err)
 			}
 		}
+	}
+}
+
+// The small player-bar cover no longer opens a download popup; it still
+// opens Now Playing on left click, where the large cover keeps its menu.
+func TestPlayerBarCoverHasNoDownloadPopup(t *testing.T) {
+	a, tt := coverMenuApp(false)
+	if err := tt.RightClick("播放栏封面"); err != nil {
+		t.Fatal(err)
+	}
+	tt.Frame()
+	if a.menu.open || a.nowPlaying {
+		t.Fatal("small cover opened a popup or changed view")
+	}
+	if err := tt.Click("播放栏封面"); err != nil {
+		t.Fatal(err)
+	}
+	tt.Advance(time.Second)
+	if !a.nowPlaying {
+		t.Fatal("small cover no longer opens Now Playing")
 	}
 }

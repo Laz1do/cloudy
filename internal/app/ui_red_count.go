@@ -85,30 +85,16 @@ func (a *app) countedHeart(c *ui.Context, tr *netease.Track, size float32, color
 	if a.pal.dark || a.nowPlaying {
 		red = ui.Hex("#ff3b43")
 	}
-	shade := color
-	if a.isLiked(tr) {
-		shade = red
-	}
-	width := size + 16
-	if showCount {
-		width = size + max(44, size*1.3)
-	}
-	wrap := ui.Box(c).Width(width).Height(size + 16).AlignItems(ui.Start)
-	wrap.Children(func() {
-		// The whole heart, round, the count beside its upper right as a
-		// superscript, rather than in a corner cut from it.
-		heart := a.heartButton(c.Key("heart"), tr, size, color, red, iconHeart, iconHeartFill)
-		if s.known {
-			heart.Tooltip(fmt.Sprintf("%d 人喜欢", s.value.Count))
+	label := ""
+	if s.known && showCount {
+		label = s.value.Description
+		if label == "" {
+			label = count(s.value.Count)
 		}
-		if s.known && showCount {
-			label := s.value.Description
-			if label == "" {
-				label = count(s.value.Count)
-			}
-			ui.Text(c.Key("red-count"), label).FontSize(max(10, size*0.46)).FontWeight(700).FontFeatures("tnum").TextColor(shade).
-				Absolute().Top(-2).Left(8 + size*0.86).SingleLine().Label(fmt.Sprintf("%d 人喜欢", s.value.Count))
-		}
-	})
-	return wrap
+	}
+	heart := a.heartButton(c.Key("heart"), tr, size, color, red, iconHeart, iconHeartFill, label)
+	if s.known {
+		heart.Tooltip(fmt.Sprintf("%d 人喜欢", s.value.Count))
+	}
+	return heart
 }

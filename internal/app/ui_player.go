@@ -528,7 +528,6 @@ func (a *app) playerBar(c *ui.Context, foreground float32) {
 			hovered := info.Hovered()
 			info.Children(func() {
 				art := ui.Box(c).Size(48, 48).Shrink(0).Label("播放栏封面")
-				a.coverContext(art, tr)
 				a.barSpot.cover = art.LayoutBounds()
 				a.lifted(art)
 				art.Children(func() {

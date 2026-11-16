@@ -106,12 +106,12 @@ func TestPlayerBarKeepsReadableCredits(t *testing.T) {
 func TestPlayerBarCompactCounts(t *testing.T) {
 	a := playerBarLayoutApp()
 	tt := playerBarTester(a, 1180)
-	if !tt.HasText("230000 人喜欢") || !tt.HasText("999+") {
+	if !tt.HasText("23w+") || !tt.HasText("999+") {
 		t.Fatalf("wide bar lost counts: %q", tt.Texts())
 	}
 	tt.SetSize(880, 780)
 	tt.Frame()
-	if tt.HasText("230000 人喜欢") || tt.HasText("999+") {
+	if tt.HasText("23w+") || tt.HasText("999+") {
 		t.Fatal("narrow bar still spends space on badges")
 	}
 	for _, tip := range []struct{ button, text string }{{"喜欢", "230000 人喜欢"}, {"评论", "9999 条评论"}} {
@@ -125,7 +125,7 @@ func TestPlayerBarCompactCounts(t *testing.T) {
 	tt.Move(800, 100)
 	tt.SetSize(1180, 780)
 	tt.Frame()
-	if !tt.HasText("230000 人喜欢") || !tt.HasText("999+") {
+	if !tt.HasText("23w+") || !tt.HasText("999+") {
 		t.Fatal("widening did not restore counts")
 	}
 }
