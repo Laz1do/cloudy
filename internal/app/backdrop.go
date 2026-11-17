@@ -26,6 +26,9 @@ import (
 // the CPU paints it still. Paused, the fog glides to a stop, and the
 // canvas stays as it is.
 //
+// The fog is one scene of several (backdrop_scenes.go), which the
+// listener chooses among.
+//
 // Another song's backdrop fades in over the last one's, which stays as it
 // was, in a canvas of its own, until it is gone.
 
@@ -114,11 +117,16 @@ type backdropCache struct {
 	fadeAt time.Time  // when it began to
 	art    *artwork
 	tint   ui.Color
+	cover  ui.Color // the cover's color, whatever the scene paints in
 	fog    bool
+	style  string    // the scene of the fog (settings.FogStyle)
 	at     time.Time // when it was painted
 	drift  float64   // the clouds' time, in seconds, which stops on pause
 	speed  float64   // how fast drift goes: 1 playing, 0 paused
 	level  barState
+	beat   beatState // the beats of what plays, and the drops they let fall
+	leaves leafState // the leaves afloat on the pool
+	moved  float64   // how far the drift went at the last step, in seconds
 	last   time.Time
 }
 
@@ -126,6 +134,11 @@ type backdropCache struct {
 func (a *app) backdrop(c *ui.Context, art *artwork, tint ui.Color, opacity float32) {
 	pl := a.pl
 	fog, still := a.settings.Fog, c.Preferences().ReduceMotion
+	style := a.settings.FogStyle
+	cover := tint
+	if fog {
+		tint = a.settings.tintOf(backdropSceneOf(style).id, tint)
+	}
 	ui.Box(c).Absolute().Top(0).Left(0).Right(0).Bottom(0).PassThrough().Draw(func(p *ui.Painter, r ui.Rect) {
 		// The CPU, drawing the fog for want of a GPU, paints far fewer
 		// pixels, and those once a song: the fog stays still.
@@ -136,6 +149,7 @@ func (a *app) backdrop(c *ui.Context, art *artwork, tint ui.Color, opacity float
 		}
 		cw, ch := int(r.W/div)+1, int(r.H/div)+1
 		bd := &a.backdropCache
+		bd.cover = cover
 		if bd.canvas != nil {
 			if w, h := bd.canvas.Size(); w != cw || h != ch {
 				bd.canvas, bd.before = nil, nil
@@ -149,17 +163,22 @@ func (a *app) backdrop(c *ui.Context, art *artwork, tint ui.Color, opacity float
 		moving := fog && gpu && !still
 		lv, live := pl.Levels()
 		moved := bd.step(now, pl.Playing() && moving, lv, live && moving)
+		aspect := r.W / max(r.H, 1)
+		if fog && backdropSceneOf(style).over != nil {
+			bd.leaves.step(float32(bd.moved), aspect, bd.drift, &bd.beat.drops)
+		}
+		leaves := bd.leaves.uniform(aspect)
 		due := now.Sub(bd.at) >= backdropFrame-2*time.Millisecond
-		if bd.canvas == nil || bd.art != art || bd.tint != tint || bd.fog != fog || moved && due {
+		if bd.canvas == nil || bd.art != art || bd.tint != tint || bd.fog != fog || bd.style != style || moved && due {
 			if bd.canvas == nil {
 				bd.canvas = ui.NewCanvas(cw, ch)
 			}
-			bd.art, bd.tint, bd.fog, bd.at = art, tint, fog, now
+			bd.art, bd.tint, bd.fog, bd.style, bd.at = art, tint, fog, style, now
 			bass := bd.level.group(0, 6)
 			bd.canvas.Draw(p, func(cp *ui.Painter) {
 				box := ui.Rect{W: float32(cw), H: float32(ch)}
 				if fog {
-					drawFog(cp, box, tint, float32(bd.drift), bass)
+					drawSceneDrops(cp, box, style, tint, float32(bd.drift), bass, bd.beat.uniform(), leaves)
 				} else {
 					drawBackdrop(cp, box, art, tint)
 				}
@@ -175,6 +194,10 @@ func (a *app) backdrop(c *ui.Context, art *artwork, tint ui.Color, opacity float
 			} else {
 				bd.before = nil
 			}
+		}
+		if fog && gpu {
+			// The stars, too fine for the canvas.
+			drawSceneOver(p, r, style, tint, float32(bd.drift), bd.level.group(0, 6), opacity, bd.beat.uniform(), leaves)
 		}
 		if moved {
 			p.After(backdropFrame)
@@ -199,8 +222,17 @@ func (bd *backdropCache) step(now time.Time, playing bool, lv [player.Bands]floa
 	if math.Abs(to-bd.speed) < 0.005 {
 		bd.speed = to
 	}
-	bd.drift += bd.speed * dt
+	bd.moved = bd.speed * dt
+	bd.drift += bd.moved
 	bd.level.step(now, lv, live)
+	// The low end as it is, not eased as the level is: a beat is a leap.
+	low := float32(0)
+	if live {
+		for _, v := range lv[:6] {
+			low += v / 6
+		}
+	}
+	bd.beat.step(low, float32(dt), bd.drift, playing && live)
 	return bd.speed > 0 || bd.level.group(0, 6) > 0.004
 }
 

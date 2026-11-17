@@ -317,9 +317,10 @@ func drawBars(p *ui.Painter, r ui.Rect, st *barState, n int, color ui.Color, min
 	}
 }
 
-// segmented is a segmented control as AppKit draws one: segments of one
-// width in a small gray track, divided by hairlines, the one chosen raised
-// on a capsule that slides to the next as it changes. It reports whether
+// segmented is a segmented control: segments of one width in a quiet
+// track, with nothing between them, the one chosen raised on a capsule
+// that slides to the next as it changes, its name in the text's own
+// color and weight where the others' are muted. It reports whether
 // the user chose another.
 func (a *app) segmented(c *ui.Context, selected *int, labels ...string) bool {
 	return a.segmentedControl(c, selected, labels, true, nil)
@@ -329,15 +330,15 @@ func (a *app) segmented(c *ui.Context, selected *int, labels ...string) bool {
 // handles a click on the already selected segment as well as a new one.
 func (a *app) segmentedControl(c *ui.Context, selected *int, labels []string, active bool, pick func(int)) bool {
 	t := c.Theme()
-	const height, inset, radius = 28, 2, 14
+	const height, inset, radius = 30, 3, 15
 	width := float32(0)
 	for _, l := range labels {
 		w, _ := c.MeasureText(0, ui.Span{Text: l, Size: 13})
-		width = max(width, w+26)
+		width = max(width, w+30)
 	}
-	track, capsule, divider := ui.RGBA(0, 0, 0, 0.06), ui.RGB(255, 255, 255), ui.RGBA(0, 0, 0, 0.13)
+	track, capsule, press := ui.RGBA(0, 0, 0, 0.055), ui.RGB(255, 255, 255), ui.RGBA(0, 0, 0, 0.06)
 	if t.Dark {
-		track, capsule, divider = ui.RGBA(255, 255, 255, 0.08), ui.RGBA(255, 255, 255, 0.24), ui.RGBA(255, 255, 255, 0.13)
+		track, capsule, press = ui.RGBA(255, 255, 255, 0.07), ui.RGBA(255, 255, 255, 0.17), ui.RGBA(255, 255, 255, 0.07)
 	}
 	before := *selected
 	parts := ui.SegmentedBase(c, selected, len(labels))
@@ -349,21 +350,15 @@ func (a *app) segmentedControl(c *ui.Context, selected *int, labels []string, ac
 	hasSelection := active && *selected >= 0 && *selected < n
 	dark := t.Dark
 	parts.Track.Height(height).Padding(inset).Radius(radius).Background(track).Draw(func(p *ui.Painter, r ui.Rect) {
-		// Hairlines between segments, but beside the capsule.
-		for i := 1; i < n; i++ {
-			if d := float32(i) - at; hasSelection && d > -1 && d < 2 {
-				continue
-			}
-			x := r.X + inset + float32(i)*width
-			p.Fill(ui.Rect{X: x - 0.5, Y: r.Y + 6, W: 1, H: r.H - 12}, divider, 0)
-		}
 		pill := ui.Rect{X: r.X + inset + at*width, Y: r.Y + inset, W: width, H: r.H - 2*inset}
 		if !hasSelection {
 			return
 		}
-		if !dark {
-			p.Shadow(pill, radius-inset, 0, 0.5, 1, 0, ui.RGBA(0, 0, 0, 0.2))
-			p.Shadow(pill, radius-inset, 0, 1, 3, 0, ui.RGBA(0, 0, 0, 0.06))
+		if dark {
+			p.Shadow(pill, radius-inset, 0, 1, 4, 0, ui.RGBA(0, 0, 0, 0.28))
+		} else {
+			p.Shadow(pill, radius-inset, 0, 0.5, 1, 0, ui.RGBA(0, 0, 0, 0.16))
+			p.Shadow(pill, radius-inset, 0, 2, 6, 0, ui.RGBA(0, 0, 0, 0.08))
 		}
 		p.Fill(pill, capsule, radius-inset)
 	}).Children(func() {
@@ -372,10 +367,17 @@ func (a *app) segmentedControl(c *ui.Context, selected *int, labels []string, ac
 			if pick != nil {
 				seg.OnClick(func() { pick(i) })
 			}
-			if seg.Pressed() && i != *selected {
-				seg.Background(divider)
+			on := hasSelection && i == *selected
+			if seg.Pressed() && !on {
+				seg.Background(press)
 			}
-			seg.Children(func() { ui.Text(c, l).FontSize(13).TextColor(t.Text).SingleLine() })
+			color, weight := t.Text.Alpha(0.62), 400
+			if on {
+				color, weight = t.Text, 600
+			} else if seg.Hovered() {
+				color = t.Text
+			}
+			seg.Children(func() { ui.Text(c, l).FontSize(13).FontWeight(weight).TextColor(color).SingleLine() })
 		}
 	})
 	return *selected != before

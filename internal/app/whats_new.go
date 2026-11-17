@@ -124,7 +124,7 @@ func (a *app) whatsNewDialog(c *ui.Context) {
 			if w.cover {
 				ui.Row(c).Gap(8).AlignItems(ui.Start).Padding(10, 12).Radius(14).Background(p.accent.Alpha(0.1)).Children(func() {
 					ui.Icon(c, iconSparkles).Size(16, 16).Shrink(0).TextColor(p.accent)
-					ui.Text(c, "侧栏和主界面的封面色背景已默认开启，开启时不再使用所选的主题色。不需要的话，可以在「设置 → 视觉效果 → 液态玻璃」里关闭。").
+					ui.Text(c, "侧栏和主界面的封面色背景已默认开启，开启时不再使用所选的主题色。不需要的话，可以在「设置 → 外观 → 材质」里关闭。").
 						FontSize(13).LineHeight(1.5).TextColor(ink.text).Shrink(1).MinWidth(0)
 				})
 			}
@@ -140,7 +140,7 @@ func (a *app) whatsNewDialog(c *ui.Context) {
 		dialogFooter(c, func() {
 			if w.cover && settingButton(c.Key("open-effects"), ink, "去设置", nil, false, false).Clicked() {
 				w.open = false
-				a.openSettingsAt(settingsEffects)
+				a.openSettingsAt(settingsAppearance)
 			}
 			if !w.loading && w.notes == "" && settingButton(c.Key("github"), ink, "在 GitHub 查看", nil, false, false).Clicked() {
 				mygo.Shell.OpenExternal("https://github.com/" + releaseRepo + "/releases/tag/v" + strings.TrimPrefix(w.version, "v"))

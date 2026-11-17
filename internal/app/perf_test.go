@@ -11,6 +11,25 @@ import (
 	"netease-music-mygo/internal/netease"
 )
 
+// Expanding lyric export options must stop requesting frames once the dialog has settled.
+func TestLyricDownloadStopsAnimating(t *testing.T) {
+	a := newTestApp()
+	a.settings = defaultSettings()
+	a.openLyricDownload(netease.Track{Name: "song"})
+	tt := ui.NewTester(func(c *ui.Context) { a.pal = paletteFor(c.Theme()); a.motion = motionFull; a.lyricDownloadDialog(c) }, 600, 620)
+	tt.SetScale(0.3)
+	for _, control := range []string{"切换歌词时间戳", "切换歌词翻译", "切换歌词翻译", "切换分离翻译", "切换歌词时间戳", "切换分离翻译"} {
+		if err := tt.Click(control); err != nil {
+			t.Fatal(err)
+		}
+		tt.Advance(time.Second)
+		tt.Frame()
+		if tt.FramePending() {
+			t.Fatalf("dialog kept requesting frames after %s settled", control)
+		}
+	}
+}
+
 // transitionPlaylist supplies enough rows to expose work on the hidden page.
 func transitionPlaylist() *app {
 	a := newTestApp()

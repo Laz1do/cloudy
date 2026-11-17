@@ -19,7 +19,6 @@ type plView struct {
 	route route
 	query string
 	sort  int
-	long  bool // what it says shows in full
 	// What these gave last, sorting and searching a thousand songs being more
 	// than a frame should do each time.
 	of      *netease.Track
@@ -396,29 +395,6 @@ func (a *app) coverStackURLs(c *ui.Context, urls []string) {
 			cov.Children(func() { a.coverFill(c, urls[i], 240, 14) })
 		}
 	})
-}
-
-// playlistSays is what a playlist says of itself: a line, which opens.
-func (a *app) playlistSays(c *ui.Context, text string) {
-	p, v := a.pal, &a.plView
-	lines := 1
-	if v.long {
-		lines = 8
-	}
-	more := ui.ButtonBase(c.Key("says")).Gap(8).AlignItems(ui.End).Justify(ui.Start).FocusRing(false).Label("歌单简介").Margin(2, 0, 0, 0)
-	more.Children(func() {
-		ui.Text(c, text).FontSize(12.5).TextColor(p.muted).MaxLines(lines).LineHeight(1.45).Grow(1).Shrink(1).MinWidth(0)
-		if len([]rune(text)) > 60 {
-			label := "展开"
-			if v.long {
-				label = "收起"
-			}
-			ui.Text(c, label).FontSize(12).FontWeight(600).TextColor(p.text).Shrink(0)
-		}
-	})
-	if more.Clicked() {
-		v.long = !v.long
-	}
 }
 
 // listTools are over a list of songs: how many there are and how long they

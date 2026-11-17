@@ -503,7 +503,10 @@ func (e *StreamError) Unwrap() error { return e.Cause }
 
 // Stream is where a track streams from, and what it is.
 type Stream struct {
-	URL  string `json:"-"`
+	URL string `json:"-"`
+	// Path is the file the song plays from, a downloaded or the
+	// listener's own, or "" for a stream of NetEase's.
+	Path string `json:"-"`
 	Size int64  `json:"size"` // in bytes
 	// Type is the format: mp3, or flac for the lossless levels.
 	Type string `json:"type"`

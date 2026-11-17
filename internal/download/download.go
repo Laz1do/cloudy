@@ -231,6 +231,15 @@ func FileName(tr netease.Track, ext string) string {
 	return truncate(name, 120) + "." + strings.TrimPrefix(strings.ToLower(ext), ".")
 }
 
+// LyricFileName names one half of a split lyric export using the song's title.
+func LyricFileName(tr netease.Track, part, ext string) string {
+	title := strings.Trim(clean(strings.TrimSpace(tr.Name)), " ._")
+	if title == "" {
+		title = "未知歌曲"
+	}
+	return truncate(title, 100) + "-" + part + "." + ext
+}
+
 // clean takes out the characters Windows, macOS and Linux refuse in a name,
 // and the control characters none of them want.
 func clean(name string) string {

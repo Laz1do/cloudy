@@ -132,6 +132,25 @@ func fetchLyrics(t netease.Track) []lyrics.Line {
 	return lines
 }
 
+// MoreWords, if set, finds word-timed lyrics of t elsewhere, for songs
+// NetEase has only line-timed lyrics of; none if it finds none.
+var MoreWords func(t netease.Track) []lyrics.Line
+
+// wantsMoreWords reports whether lines of t are timed only by line, their
+// words running at one pace, and so worth looking for elsewhere.
+func wantsMoreWords(t netease.Track, lines []lyrics.Line) bool {
+	return MoreWords != nil && t.ID > 0 && t.ProgramID == 0 && len(lines) > 0 && !lyrics.IsPlain(lines) && !anyTimed(lines)
+}
+
+func anyTimed(lines []lyrics.Line) bool {
+	for _, l := range lines {
+		if l.Timed {
+			return true
+		}
+	}
+	return false
+}
+
 // fetchCover fetches a track's cover; tests keep it off the network.
 var fetchCover = func(t netease.Track) ([]byte, error) {
 	return netease.Fetch(netease.Sized(t.Album.PicURL, 600))

@@ -130,3 +130,18 @@ func (p *Player) ClearUpcoming() {
 	p.order, p.at = []int{0}, 0
 	p.sync()
 }
+
+// Clear empties the queue, the track playing too: the music stops, and
+// nothing is left to play until something is chosen again. A radio ends.
+func (p *Player) Clear() {
+	if p.radio != "" || p.feed != nil {
+		p.endRadio()
+	}
+	p.tellListened(false)
+	p.stop()
+	p.queue, p.order, p.at = nil, nil, -1
+	p.track, p.playing, p.err, p.awaiting = nil, false, "", false
+	p.lyrics, p.lyricsLoaded = nil, false
+	p.cover, p.coverOf = nil, 0
+	p.sync()
+}

@@ -14,18 +14,18 @@ func TestSettingsScrollKeepsDirectText(t *testing.T) {
 	a := newTestApp()
 	a.settings = defaultSettings()
 	a.settings.path = filepath.Join(t.TempDir(), "settings.json")
-	a.settingsView.open, a.settingsView.tab, a.updates = true, settingsEffects, true
+	a.settingsView.open, a.settingsView.tab, a.updates = true, settingsAppearance, true
 	tt := ui.NewTester(a.view, 1332, 849)
 	tt.Frame()
 	tt.Advance(time.Second)
-	pane, ok := tt.Find("视觉效果设置项")
+	pane, ok := tt.Find("外观设置项")
 	if !ok {
 		t.Fatal("settings viewport missing")
 	}
 	tt.Scroll(pane.X+50, pane.Y+pane.H/2, 0, 320)
 	tt.Advance(time.Second)
 	tt.Frame()
-	if a.settingsView.scroll[settingsEffects].Y <= 24 {
+	if a.settingsView.scroll[settingsAppearance].Y <= 24 {
 		t.Fatal("settings did not scroll past the edge fade")
 	}
 	// The pinned Tester's display list exposes whether the middle of the
@@ -53,7 +53,7 @@ func TestSettingsScrollKeepsDirectText(t *testing.T) {
 	tt.Scroll(pane.X+50, pane.Y+pane.H/2, 0, -1000)
 	tt.Advance(time.Second)
 	tt.Frame()
-	if a.settingsView.scroll[settingsEffects].Y != 0 {
+	if a.settingsView.scroll[settingsAppearance].Y != 0 {
 		t.Fatal("settings failed to return to top")
 	}
 }

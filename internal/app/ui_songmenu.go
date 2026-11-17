@@ -19,33 +19,16 @@ var copyText = func(text string) error { return mygo.Clipboard.Write(transfer.Te
 // or album's, and, signed in, adding it to a playlist or taking it out of
 // pid, the playlist it is listed in, if set.
 func (a *app) songActions(tr *netease.Track, pid int64) [][]menuAction {
-	groups := a.baseSongActions(tr, pid)
-	if tr.Album.PicURL != "" {
-		cover := a.coverAction(tr)
-		for i, group := range groups {
-			for _, action := range group {
-				if action.label == "下载到本机" || action.label == "从本地删除" {
-					groups[i] = append(group, cover)
-					return groups
-				}
-			}
-		}
-		groups = append(groups, []menuAction{cover})
-	}
-	return groups
-}
-
-func (a *app) baseSongActions(tr *netease.Track, pid int64) [][]menuAction {
 	// A file put in the folder by hand is no NetEase song: only its file
 	// can be acted on. A downloaded song is still one, with its file too.
 	if tr.LocalPath != "" && tr.ID <= 0 {
-		return a.downloadedSongActions(tr)
+		return a.withCoverAction(a.downloadedSongActions(tr), tr)
 	}
 	// The list can move under the menu; the song it names cannot.
 	song := *tr
 	next := menuAction{label: "下一首播放", icon: iconNext, do: func() { a.playNext([]netease.Track{song}) }}
 	if tr.ProgramID != 0 {
-		return append([][]menuAction{{next}}, a.programActions(tr)...)
+		return a.withCoverAction(append([][]menuAction{{next}}, a.programActions(tr)...), tr)
 	}
 	a.loadDownloads(false)
 	save := menuAction{label: "下载到本机", icon: iconDownload, do: func() { a.startDownload(song) }}
@@ -72,7 +55,11 @@ func (a *app) baseSongActions(tr *netease.Track, pid int64) [][]menuAction {
 			{label: "复制文件路径", icon: iconCopy, do: func() { copyText(song.LocalPath) }},
 		})
 	}
-	groups = append(groups, []menuAction{save})
+	files := []menuAction{save, {label: "下载歌词", icon: iconLyrics, do: func() { a.openLyricDownload(song) }}}
+	if tr.Album.PicURL != "" {
+		files = append(files, a.coverAction(tr))
+	}
+	groups = append(groups, files)
 	// Its artists' and album's pages, those NetEase has.
 	var pages []menuAction
 	for _, ar := range tr.Artists {
@@ -92,6 +79,15 @@ func (a *app) baseSongActions(tr *netease.Track, pid int64) [][]menuAction {
 		groups = append(groups, lists)
 	}
 	return groups
+}
+
+// withCoverAction adds saving the cover, in a group of its own, to the
+// menus that have no download row to put it beside.
+func (a *app) withCoverAction(groups [][]menuAction, tr *netease.Track) [][]menuAction {
+	if tr.Album.PicURL == "" {
+		return groups
+	}
+	return append(groups, []menuAction{a.coverAction(tr)})
 }
 
 // playNext puts tracks right after the song playing, and says so.

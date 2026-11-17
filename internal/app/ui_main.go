@@ -128,12 +128,14 @@ func (a *app) view(c *ui.Context) {
 	a.settingsPanel(c)
 	a.globalGlassDialog(c)
 	a.signOutDialog(c)
+	a.introDialog(c)
 	a.accentDialog(c)
 	a.updateDialog(c)
 	a.whatsNewDialog(c)
 	a.shortcutEditorDialog(c)
 	a.fontPickerDialog(c)
 	a.effectsDialog(c)
+	a.lyricDownloadDialog(c)
 	a.menuOverlay(c)
 	a.downloadQueueDialog(c)
 	a.uploadQueueDialog(c)
@@ -334,6 +336,10 @@ func (a *app) load(r route) {
 		a.loadDownloads(false)
 	case pageRecent:
 		a.recent.sure = false
+	case pageWeek:
+		if len(a.week.songs) == 0 {
+			a.loadWeek()
+		}
 	case pageCloud:
 		a.loadCloud(false)
 	case pageLocal:
@@ -395,9 +401,13 @@ func (a *app) sidebar(c *ui.Context, foreground float32) {
 		}
 		a.searchField(c)
 
-		nav := ui.Box(c.Key("nav-box")).Grow(1).MinHeight(0).Margin(0, -6)
+		// The scroll reaches into the sidebar's margin at the right, as far
+		// as its bar is wide, the rows where they were: the bar, wider under
+		// the pointer, lay over the rows' ends, the section heads' ＋ and
+		// their hover.
+		nav := ui.Box(c.Key("nav-box")).Grow(1).MinHeight(0).Margin(0, -14, 0, -6)
 		nav.Children(func() {
-			nav := ui.Scroll(c.Key("nav")).TrackScroll(&a.navScroll).Fill().Padding(0, 6).Gap(4)
+			nav := ui.Scroll(c.Key("nav")).TrackScroll(&a.navScroll).Fill().Padding(0, 14, 0, 6).Gap(4)
 			top := easeRange(a.navScroll.Y, 0, 16)
 			bottom := easeRange(a.navScroll.MaxY-a.navScroll.Y, 0, 16)
 			if top > 0 || bottom > 0 {
@@ -569,6 +579,12 @@ func (a *app) pageTop(c *ui.Context, foreground float32) {
 			Material(glass.ScrollEdge{Hard: true, Background: a.pal.bg})
 		edge.Opacity(edgeShown(edge, a.underTop))
 	}
+	// The settings, left of the window's own buttons, where apps keep them.
+	ui.Row(c.Key("top-settings")).Absolute().Top(0).Right(c.TitleBar().Right + 10).Height(topBar(c)).AlignItems(ui.Center).Opacity(foreground).Children(func() {
+		if iconButton(c.Key("settings"), iconSettings, 17, a.pal.muted, "设置").Clicked() {
+			a.openSettings()
+		}
+	})
 	if len(a.history) > 0 || len(a.forward) > 0 {
 		ui.Row(c).Absolute().Top(0).Left(20).Height(topBar(c)).AlignItems(ui.Center).Opacity(foreground).Children(func() {
 			back := iconButton(c.Key("back"), iconBack, 18, a.pal.muted, "返回").Disabled(len(a.history) == 0)
@@ -645,6 +661,8 @@ func (a *app) content(c *ui.Context, foreground float32) {
 			a.localPage(c)
 		case pageStyle:
 			a.stylePage(c)
+		case pageWeek:
+			a.weekPage(c)
 		}
 	})
 }
@@ -670,6 +688,8 @@ func (a *app) loadHome() {
 	a.loadStyle()
 	a.radar.lists = nil
 	a.loadRadars()
+	a.week.songs = nil
+	a.loadWeek()
 	a.filteredPlaylists = [len(playlistFilters)]*playlistBrowseData{}
 	signedIn := a.profile != nil
 	at := time.Now()

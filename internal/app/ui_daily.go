@@ -43,7 +43,9 @@ func (a *app) dailyArt(c *ui.Context, now time.Time, size float32) {
 // on wide pages the first picks are listed between. Under the pointer the
 // covers fan and the record slides out, turning; while the day's songs
 // play it turns on, and grooves ripple out from it across the card.
-func (a *app) dailyCard(c *ui.Context, now time.Time) {
+// Lying under another page of the home page's calendar (back), it keeps
+// still and takes no pointer.
+func (a *app) dailyCard(c *ui.Context, now time.Time, back bool) {
 	songs := a.daily
 	if len(songs) == 0 {
 		return
@@ -53,7 +55,8 @@ func (a *app) dailyCard(c *ui.Context, now time.Time) {
 	still := c.Preferences().ReduceMotion
 	art := a.art.get(netease.Sized(songs[0].Album.PicURL, 600), true)
 	card := ui.ButtonBase(c.Key("daily")).Height(dailyHeight).Radius(dailyRadius).FocusRing(false).Label("每日推荐").TextColor(white)
-	hovered := card.Hovered()
+	hovered := card.Hovered() && !back
+	a.deckGrip(card, deckDaily)
 	ours, playing := a.dailyPlaying()
 
 	// The cover's colors, eased in as it loads.
@@ -62,7 +65,9 @@ func (a *app) dailyCard(c *ui.Context, now time.Time) {
 	deep, rich, glow = card.AnimateColor("deep", deep, fade), card.AnimateColor("rich", rich, fade), card.AnimateColor("glow", glow, fade)
 	card.Background(deep)
 	lift := card.AnimateTo("lift", b2f(hovered), ui.Snappy)
-	card.Shadow(0, 14+8*lift, 34+12*lift, -14, a.pal.cardShade)
+	if a.deckFlat(deckDaily) {
+		card.Shadow(0, 14+8*lift, 34+12*lift, -14, a.pal.cardShade)
+	}
 	// A sheen sweeps across once as the pointer comes in.
 	sweep := float32(0)
 	if hovered && !still {
@@ -83,7 +88,7 @@ func (a *app) dailyCard(c *ui.Context, now time.Time) {
 	out = card.AnimateTo("out", out, ui.Animation{Spring: ui.SpringOptions{Duration: 700 * time.Millisecond, Bounce: 0.25}})
 	turn := 0.0
 	switch {
-	case still:
+	case still, back:
 	case playing:
 		turn = 1
 	case hovered:
@@ -95,11 +100,14 @@ func (a *app) dailyCard(c *ui.Context, now time.Time) {
 	card.Children(func() {
 		ui.Box(c).Absolute().Top(0).Left(0).Right(0).Bottom(0).PassThrough().Draw(func(p *ui.Painter, r ui.Rect) {
 			spin := &a.dailySpin
+			// At the display's rate: paced to dailyRate, the frames that only
+			// paint came unevenly on Windows once the pointer rested, the
+			// refreshes between skipped by more than they should be.
 			if spin.step(p.Now(), turn) {
-				p.AnimationFrameRate(dailyRate)
+				p.AnimationFrame()
 			}
 			// Where the record turns: at the right, in its sleeve's stack.
-			cx := r.X + r.W - dailyPadX - 120
+			cx := r.X + r.W - dailyPadX - 12 - deckSmallCover/2
 			if showStack {
 				cx = r.X + r.W - dailyPadX - stackWidth + sleeveLeft + sleeveSize/2 + recordOut(out)
 			}
@@ -126,12 +134,15 @@ func (a *app) dailyCard(c *ui.Context, now time.Time) {
 			if showPicks {
 				a.dailyPicks(c, songs, ours)
 			}
-			if showStack {
+			switch {
+			case showStack:
 				a.dailyStack(c, songs, hovered && !still, out)
+			case inner >= deckSmallMin:
+				a.deckCoverArt(c, "small", songs[0].Album.PicURL, iconNote, hovered && !still, deckSmallCover)
 			}
 		})
 	})
-	if card.Clicked() {
+	if a.deckClicked(card.Clicked()) {
 		a.open(route{page: pageDaily})
 	}
 }
@@ -147,11 +158,10 @@ const (
 	recordSize  = 146
 )
 
-// dailyRate is how many frames a second the daily card draws what moves
-// on it, its record turning and the bars on its play button: every frame
-// of a 120 Hz display, it redrew the whole card 120 times a second, for
-// motion that looks as smooth at half of that; at a quarter, the record's
-// label steps.
+// dailyRate is how many frames a second the daily card draws the bars on
+// its play button and its picks: every frame of a 120 Hz display redrew
+// the whole card 120 times a second, for motion that looks as smooth at
+// half of that. The record turns at the display's rate.
 const dailyRate = 60
 
 // recordOut is how far right of its sleeve's middle the record's is, as

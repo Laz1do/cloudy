@@ -30,6 +30,7 @@ const (
 	pageCloud
 	pageStyle // the day's songs in the styles picked
 	pageLocal // the listener's own music, in the folders they chose
+	pageWeek  // 本周听歌排行, the songs played most in the last seven days
 )
 
 type route struct {
@@ -62,10 +63,12 @@ type app struct {
 	trayPopupDone   chan struct{}
 	trayPopupClosed time.Time
 
-	// thumbsAt is what the taskbar thumbnail shows (thumbbar.go), and
-	// thumbDark whether the taskbar is dark.
+	// thumbsAt is what the taskbar thumbnail shows (thumbbar.go),
+	// thumbDark whether the taskbar is dark, and altTab whether Alt+Tab is
+	// open (thumbswitch_windows.go).
 	thumbsAt  *thumbState
 	thumbDark bool
+	altTab    bool
 
 	route   route
 	history []route
@@ -150,9 +153,8 @@ type app struct {
 	sysAccent    string    // the desktop's accent as #RRGGBB, "" where it has none
 	npOpen       bool      // Now Playing as it last showed: open or not
 	npChangedAt  time.Time // when it last opened or closed
-	npPane       int       // paneLyrics, paneQueue, paneStage, paneComments, paneProgram or paneCaptions
+	npPane       int       // paneLyrics, paneQueue, paneStage, paneComments, paneProgram, paneCaptions, paneWall or paneWiki
 	npPaneTop    float32   // how far the cover beside the pane starts below its top
-	npRest       float32   // how tall what goes under the cover is, as last laid out
 	lyricScroll  ui.ScrollState
 	lyricGlide   lyricGlide
 	lyricWheel   float32   // the wheel over a lyric value, short of a step
@@ -257,9 +259,15 @@ type app struct {
 	savedSession string // the session as last kept
 	sessionDue   bool   // a save of the session is due
 
-	style      styleState    // the day's songs in the styles picked
-	radar      radarState    // NetEase's radars on the home page
-	progressAt progressShown // what the taskbar button last showed of the song
+	style         styleState // the day's songs in the styles picked
+	deck          deckState  // the home page's calendar of the daily and style cards
+	week          weekState  // the songs played most in the last seven days
+	deckDrawer    bool       // the settings' drawer of what the calendar holds is open
+	deckSort      deckSort   // a page dragged to a new place in that drawer
+	queueAdding   bool       // the queue's drawer of playlists to add it to is open
+	radar         radarState // NetEase's radars on the home page
+	lyricDownload lyricDownloadState
+	progressAt    progressShown // what the taskbar button last showed of the song
 }
 
 // post runs fn on the main thread and redraws both windows. Without a
@@ -273,6 +281,23 @@ func (a *app) post(fn func()) {
 		a.syncThumbs()
 		a.redraw()
 	})
+}
+
+// postQuiet returns a post that runs fn on the main thread but redraws
+// only if shown, asked there, says what fn changed is on screen: progress
+// every tenth of a second that nothing shows wakes no window.
+func (a *app) postQuiet(shown func() bool) func(func()) {
+	return func(fn func()) {
+		if a.win == nil {
+			return
+		}
+		mygo.RunOnMain(func() {
+			fn()
+			if shown() {
+				a.redraw()
+			}
+		})
+	}
 }
 
 func (a *app) redraw() {
@@ -349,9 +374,12 @@ func Run() error {
 		a.pl.PodcastSpeed = a.settings.PodcastSpeed
 		a.pl.SetEffects(a.currentEffects(), false)
 		a.pl.Quality = func() string { return a.settings.Quality }
+		a.useMoreWords()
 		a.pl.Normalize = func() bool { return a.settings.Normalize }
 		a.pl.Crossfade = a.crossfade
 		a.pl.Cache = newSongCache(a.settings.CacheFolder, a.settings.CacheMB)
+		a.pl.Loud = openLoudness()
+		go player.DropStreamSpools()
 		a.pl.LocalFile = a.downloadedFile
 		a.noteDownloadsAtStart()
 		a.pl.Listened = func(t netease.Track, played time.Duration, ended bool) {
@@ -393,6 +421,7 @@ func Run() error {
 		a.setMenu()
 		a.boot()
 		a.applyGlobalKeys()
+		a.watchAltTab()
 		// The notch player is macOS's, over its menu bar: elsewhere it would
 		// hang at the top of the screen as a black box.
 		if runtime.GOOS == "darwin" {

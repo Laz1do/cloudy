@@ -18,6 +18,8 @@ func TestLyricPerspectiveSeeksAfterReflow(t *testing.T) {
 	a := newTestApp()
 	a.settings = defaultSettings()
 	a.settings.LyricPerspective = true
+	// Left still it would calm, and a click would only wake it.
+	a.settings.NpCalm = false
 	a.nowPlaying = true
 	a.pl.Cue([]netease.Track{{ID: 1, Name: "x", Duration: 60000}})
 	a.pl.SetLyrics(lyrics.Build("[00:00]第一句歌词\n[00:05]第二句歌词\n[00:10]最后一句歌词", "[00:10]翻译", ""))

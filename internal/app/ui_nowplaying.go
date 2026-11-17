@@ -144,6 +144,10 @@ func (a *app) nowPlayingView(c *ui.Context) {
 	// The pointer is over the view whenever it is in the window.
 	pointerIn := root.Hovered()
 	a.npPointer = pointerIn
+	calm := a.npCalmness(c, root, pointerIn)
+	// The tabs and the buttons over the view show with the pointer in it,
+	// unless it has been still a while.
+	controls := pointerIn && !a.more.npCalm.calm
 	k := a.npK
 	if k < 1 {
 		// The view comes in through the bar's glass, and what is on it later,
@@ -155,21 +159,22 @@ func (a *app) nowPlayingView(c *ui.Context) {
 
 		// Over the backdrop, which is positioned too: positioned elements
 		// paint over those in the flow.
-		body := ui.Column(c).Absolute().Top(0).Left(0).Right(0).Bottom(0).Children(func() { a.nowPlayingBody(c, tr, art, accent, w, h, pointerIn) })
+		body := ui.Column(c).Absolute().Top(0).Left(0).Right(0).Bottom(0).Children(func() { a.nowPlayingBody(c, tr, art, accent, w, h, controls, calm) })
 		if k < 1 {
 			body.Opacity(easeRange(k, npTextStart, 0.95))
 		}
+		a.npCalmCover(c)
 	})
 }
 
-func (a *app) nowPlayingBody(c *ui.Context, tr *netease.Track, art *artwork, accent ui.Color, w, h float32, pointerIn bool) {
+func (a *app) nowPlayingBody(c *ui.Context, tr *netease.Track, art *artwork, accent ui.Color, w, h float32, pointerIn bool, calm float32) {
 	pl := a.pl
 	a.commentsFor(tr)
 	a.npSpot = flightSpot{radius: 14, track: white.Alpha(0.18), fill: white.Alpha(0.9), smoke: accent.Mix(white, 0.35)}
 	// An episode has what it is about and its captions in place of lyrics;
 	// a song, lyrics in place of those.
 	switch program := tr.ProgramID != 0; {
-	case program && a.npPane == paneWall:
+	case program && (a.npPane == paneWall || a.npPane == paneWiki):
 		a.npPane = paneQueue
 	case program && (a.npPane == paneLyrics || a.npPane == paneStage):
 		a.npPane = paneProgram
@@ -179,6 +184,8 @@ func (a *app) nowPlayingBody(c *ui.Context, tr *netease.Track, art *artwork, acc
 	case program && a.npPane == paneCaptions && !a.captionsShown():
 		a.npPane = paneProgram
 	case !program && (a.npPane == paneProgram || a.npPane == paneCaptions):
+		a.npPane = a.lyricsPaneChosen()
+	case a.npPane == paneWiki && !wikiShown(tr):
 		a.npPane = a.lyricsPaneChosen()
 	}
 	if a.npPane != paneQueue {
@@ -221,87 +228,214 @@ func (a *app) nowPlayingBody(c *ui.Context, tr *netease.Track, art *artwork, acc
 			return
 		}
 
-		side := float32(math.Min(float64(w)*0.36, 440))
-		// The column is in the middle of the room under the strip, and the
-		// cover leaves room above it for the tabs, and as much under the
-		// column: as small as it takes for what goes under it (a radio's
-		// chip too) to fit, never up under the tabs.
-		rest := a.npRest
-		if rest <= 0 {
-			rest = npRestGuess
+		// The cover's column is laid out for two moments, awake and calm,
+		// and goes between the two as Now Playing calms, everything in it
+		// moving on one curve: its width holds what both need, for the
+		// lyrics beside it not to wrap anew as it goes. Awake, the cover is
+		// as large as the room the tabs over it and what goes under it
+		// leave; calm, what folds up and the tabs are gone, and it grows
+		// into their room. Too short for a cover over the title (under
+		// npCardCover), it goes beside it, small, as the mini window's card
+		// has it, and from there grows over it as the view calms.
+		cs := &a.more.npCalm
+		infoH, under := cs.infoH, cs.under
+		if infoH <= 0 {
+			infoH = 52
 		}
-		room := h - topBar(c) - npRowFoot
-		coverSize := max(min(side, room-rest-2*(npTabsHeight+npTabsGap)), npCoverLeast)
-		// The column is as wide as the cover, for the cover, what plays
-		// and the tabs over it to start at one edge, but wide enough for
-		// the controls.
-		side = max(coverSize, 280)
+		if under <= 0 {
+			under = npRestGuess - 80
+		}
+		bar := topBar(c)
+		big := func(room, under float32) float32 {
+			return min(npSideMax(w), room-npTitleGap-infoH-under)
+		}
+		coverA := big(h-bar-npRowFoot-2*(npTabsHeight+npTabsGap), under)
+		coverC := coverA
+		if a.settings.NpCalm {
+			coverC = max(coverA, big(h-bar, under-cs.foldedTotal()))
+		}
+		// With some slack, for a window resized about the threshold not to
+		// go between the two at every step.
+		card := func(cover float32, was bool) bool {
+			if was {
+				return cover < npCardCover+npCardSlack
+			}
+			return cover < npCardCover
+		}
+		cardA, cardC := card(coverA, cs.cardA), card(coverC, cs.cardC)
+		cs.cardA, cs.cardC = cardA, cardC
+		cardS := max(72, min(112, (h-bar)*0.2))
+		side := float32(npSideLeast)
+		if !cardA {
+			side = max(side, coverA)
+		}
+		if !cardC {
+			side = max(side, coverC)
+		}
+		lay := npCalmLay(calm)
+		// What is in the column is as wide as the cover as it is now, for the
+		// progress and the controls to line up with it; the room the column
+		// keeps past it, for the calm cover, stays empty.
+		inner := float32(npSideLeast)
+		switch {
+		case cardA && !cardC:
+			inner = max(inner, lerp(cardS, coverC, lay))
+		case !cardA:
+			inner = max(inner, lerp(coverA, coverC, lay))
+		}
+		// Narrow, the heart, comments and menu go under the artist: beside
+		// the title they left it a few letters.
+		// By the column awake, which calming does not change.
+		stacked := cardA || max(npSideLeast, coverA) < npStackWidth
+		// Calming, the controls first fade (npCalmFade), then the column
+		// closes up and the cover grows, on one curve (npCalmLay).
+		// Calm, the room under the column for the lyrics' tools is gone.
+		foot := npRowFoot * (1 - lay)
 		padX := npSideX(w)
+		a.more.npPaneW = w - 2*padX - side - npGapX(w)
 		tabs := npTabsRow(c, w)
-		reveal(tabs, pointerIn).Children(func() { a.paneTabs(c, tabs) })
-		row := ui.Row(c.Key("np-row")).Grow(1).Padding(0, padX, npRowFoot, padX).Gap(72).AlignItems(ui.Stretch)
+		npFade(reveal(tabs, pointerIn), npCalmFade(calm)).Children(func() { a.paneTabs(c, tabs) })
+		row := ui.Row(c.Key("np-row")).Grow(1).Padding(0, padX, foot, padX).Gap(npGapX(w)).AlignItems(ui.Stretch)
 		row.Children(func() {
 			var coverTop float32
 			var volume ui.Element
-			col := ui.Column(c.Key("np-side")).Width(side).Justify(ui.Center).Gap(0)
+			col := ui.Column(c.Key("np-side")).Width(inner).Justify(ui.Center).Gap(0)
 			col.Children(func() {
 				coverTop = ui.Box(c.Key("cover-top")).Height(0).LayoutBounds().Y
-				a.npCover(c, tr, art, coverSize)
-
-				ui.Row(c).Gap(8).AlignItems(ui.Center).Margin(36, 0, 18, 0).Children(func() {
-					ui.Column(c).Grow(1).Shrink(1).MinWidth(0).Gap(4).Children(func() {
-						if r := pl.Radio(); r != "" {
-							a.radioChip(c, r)
+				// A card going over to a cover over the title: how far.
+				k := float32(0)
+				if cardA && !cardC {
+					k = lay
+				}
+				titleSize := float32(22)
+				if cardA {
+					titleSize = lerp(19, 22, k)
+				}
+				var infoEl ui.Element
+				info := func() {
+					if r := pl.Radio(); r != "" {
+						a.radioChip(c, r)
+					}
+					_, title := a.marqueeLine(c, "np-title", tr.Name, titleSize, 700, -0.3)
+					a.npSpot.title = title.LayoutBounds()
+					a.flown(title)
+					a.artistLinks(c, tr, white.Alpha(0.6), white, true).FontSize(15).SingleLine()
+				}
+				actions := func(size float32) {
+					a.likeCountButton(c.Key("like"), tr, size, white.Alpha(0.7))
+					a.commentCountButton(c.Key("comment-count"), tr, size, white.Alpha(0.7))
+				}
+				switch {
+				case cardA:
+					// The card, and on the way to a cover over the title: the
+					// cover and what plays placed by hand, each between where
+					// the card has it and where the cover over the title would.
+					cover := lerp(cardS, coverC, k)
+					if cardC {
+						cover = cardS
+					}
+					cardH := max(cardS, infoH)
+					// Room for what plays under the cover is made by the time it
+					// fades in there, halfway.
+					blockH := max(cardH, cover+(npTitleGap+infoH)*clamp01(k*2))
+					ui.Box(c.Key("np-card")).Width(inner).Height(blockH).Children(func() {
+						ui.Box(c.Key("np-card-cover")).Absolute().Left(0).Top(lerp((cardH-cardS)/2, 0, k)).Children(func() {
+							a.npCover(c, tr, art, cover)
+						})
+						// What plays cannot slide across the cover growing under
+						// it: it fades out beside the cover, and in under it.
+						infoEl = ui.Column(c.Key("np-info")).Absolute().Gap(4)
+						if k < 0.5 {
+							infoEl.Left(cover + 16).Top((max(cover, infoH) - infoH) / 2).Width(max(40, inner-cover-16)).Opacity(1 - k*2)
+						} else {
+							infoEl.Left(0).Top(cover + npTitleGap).Width(inner).Opacity(k*2 - 1)
 						}
-						title := ui.Text(c, tr.Name).FontSize(22).FontWeight(700).LetterSpacing(-0.3).SingleLine()
-						a.npSpot.title = title.LayoutBounds()
-						a.flown(title)
-						a.artistLinks(c, tr, white.Alpha(0.6), white, true).FontSize(15).SingleLine()
+						infoEl.Children(info)
 					})
-					a.likeCountButton(c.Key("like"), tr, 22, white.Alpha(0.7))
-					a.commentCountButton(c.Key("comment-count"), tr, 22, white.Alpha(0.7))
-					a.songMenu(c.Key("more"), tr, 22, white.Alpha(0.7)).Margin(0, -8, 0, 0)
-				})
+				default:
+					a.npCover(c, tr, art, lerp(coverA, coverC, lay))
+					if stacked {
+						infoEl = ui.Column(c.Key("np-info")).Margin(npTitleGap, 0, 0, 0).Gap(4).Children(info)
+					}
+				}
+				if stacked {
+					gap := float32(6)
+					if cardA {
+						gap = lerp(14, 6, k)
+					}
+					// The heart and the comments at the left, the menu at the
+					// right, as under a song in a list. Calm, they fold up.
+					a.npFold(c, "np-actions", calm, func() {
+						ui.Row(c.Key("np-actions")).Padding(gap, 0, 10, 0).Margin(0, -6, 0, -6).Gap(14).AlignItems(ui.Center).Children(func() {
+							actions(20)
+							ui.Spacer(c)
+							a.songMenu(c.Key("more"), tr, 20, white.Alpha(0.7))
+						})
+					})
+					// Folded, what plays keeps some room under it.
+					ui.Box(c).Height(10 * lay)
+				} else {
+					ui.Row(c).Gap(8).AlignItems(ui.Center).Margin(npTitleGap+8, 0, 18, 0).Children(func() {
+						infoEl = ui.Column(c.Key("np-info")).Grow(1).Shrink(1).MinWidth(0).Gap(4).Children(info)
+						npFade(ui.Row(c.Key("np-actions")).Gap(8).AlignItems(ui.Center), npCalmFade(calm)).Children(func() {
+							actions(22)
+							a.songMenu(c.Key("more"), tr, 22, white.Alpha(0.7)).Margin(0, -8, 0, 0)
+						})
+					})
+				}
 				scrub := a.scrubber(c.Key("np-scrub"), &a.npScrub, white.Alpha(0.18), white.Alpha(0.9), 16, accent.Mix(white, 0.35))
 				a.npSpot.scrub = scrub.LayoutBounds()
 				a.flown(scrub)
 				// As tall with the quality's badge as without it: the badge goes
 				// while the next song loads, and the column would move with it.
-				ui.Row(c).Height(16).AlignItems(ui.Center).Children(func() {
-					ui.Text(c, clock(pl.Position())).FontSize(11).FontFeatures("tnum").TextColor(white.Alpha(0.5))
-					ui.Spacer(c)
-					if tr.ProgramID != 0 {
-						// An episode's speed, where a song shows its quality.
-						a.speedButton(c)
-					} else {
-						qualityBadge(c, pl.Stream())
-					}
-					ui.Spacer(c)
-					status := "-" + clock(pl.Duration()-pl.Position())
-					if pl.Loading() {
-						status = "正在缓冲…"
-					}
-					ui.Text(c, status).FontSize(11).FontFeatures("tnum").TextColor(white.Alpha(0.5))
+				a.npFold(c, "np-times", calm, func() {
+					ui.Row(c).Height(16).AlignItems(ui.Center).Children(func() {
+						ui.Text(c, clock(pl.Position())).FontSize(11).FontFeatures("tnum").TextColor(white.Alpha(0.5))
+						ui.Spacer(c)
+						if tr.ProgramID != 0 {
+							// An episode's speed, where a song shows its quality.
+							a.speedButton(c)
+						} else {
+							qualityBadge(c, pl.Stream())
+						}
+						ui.Spacer(c)
+						status := "-" + clock(pl.Duration()-pl.Position())
+						if pl.Loading() {
+							status = "正在缓冲…"
+						}
+						ui.Text(c, status).FontSize(11).FontFeatures("tnum").TextColor(white.Alpha(0.5))
+					})
 				})
-				ui.Box(c).Margin(14, 0, 18, 0).Children(func() {
-					a.playFlies = a.flown
-					a.transport(c, white, white.Alpha(0.45), accent, 28)
-					a.playFlies = nil
-					a.npSpot.play = a.playSpot
+				// Calm, the controls fold up, play too: what plays is all
+				// there is to see.
+				a.npFold(c, "np-transport", calm, func() {
+					ui.Box(c).Padding(14, 0, 18, 0).Children(func() {
+						a.playFlies = a.flown
+						a.transport(c, white, white.Alpha(0.45), accent, 28)
+						a.playFlies = nil
+						a.npSpot.play = a.playSpot
+					})
 				})
-				volume = ui.Row(c.Key("np-volume-row")).Justify(ui.Center).Children(func() {
-					a.npVolume(c, 28, white.Alpha(0.7), white.Alpha(0.18), white.Alpha(0.5))
+				a.npFold(c, "np-volume", calm, func() {
+					volume = ui.Row(c.Key("np-volume-row")).Justify(ui.Center).Children(func() {
+						a.npVolume(c, 28, white.Alpha(0.7), white.Alpha(0.18), white.Alpha(0.5))
+					})
 				})
 				// How tall what is under the cover came out, for the cover's
 				// size in the next frame.
+				// How tall what plays and what goes under it came out awake,
+				// for the cover's sizes in the next frame.
 				end := ui.Box(c.Key("np-end")).Height(0).LayoutBounds().Y
-				if cv := a.npSpot.cover; coverTop > 0 && end > coverTop && cv.H > 0 {
-					if r := end - coverTop - cv.H; math.Abs(float64(r-a.npRest)) > 0.5 {
-						a.npRest = r
+				if ib, cv := infoEl.LayoutBounds(), a.npSpot.cover; calm == 0 && ib.H > 0 && cv.H > 0 && end > 0 {
+					got := end - max(ib.Y+ib.H, cv.Y+cv.H)
+					if math.Abs(float64(ib.H-cs.infoH)) > 0.5 || math.Abs(float64(got-cs.under)) > 0.5 {
+						cs.infoH, cs.under = ib.H, got
 						c.AnimationFrame()
 					}
 				}
 			})
+			// The rest of the column's room, for the lyrics to stay put.
+			ui.Box(c.Key("np-side-room")).Width(side-inner).Margin(0, -npGapX(w), 0, 0)
 			tools := false
 
 			pane := ui.Column(c.Key("pane")).Grow(1).Basis(0).MinWidth(0)
@@ -310,7 +444,8 @@ func (a *app) nowPlayingBody(c *ui.Context, tr *netease.Track, art *artwork, acc
 				// tabs, which start level with the pane's top: they come and go
 				// with the pointer, so they sit out of the flow, never over it.
 				b := pane.LayoutBounds()
-				if b.H > 0 && coverTop > 0 {
+				// It stays put as the view calms: the lyrics would slide.
+				if b.H > 0 && coverTop > 0 && calm == 0 {
 					if top := max(coverTop-b.Y, npTabsHeight+8); top != a.npPaneTop {
 						a.npPaneTop = top
 						c.AnimationFrame()
@@ -318,12 +453,16 @@ func (a *app) nowPlayingBody(c *ui.Context, tr *netease.Track, art *artwork, acc
 				} else {
 					c.AnimationFrame() // not laid out yet: the next frame places it
 				}
-				ui.Box(c).Height(a.npPaneTop)
+				// Eased: going over to the card or back moves the cover's top,
+				// which the lyrics would follow in one jump.
+				ui.Box(c).Height(pane.AnimateTo("pane-top", a.npPaneTop, ui.Animation{Duration: 300 * time.Millisecond, Ease: motionEase}))
 				switch a.npPane {
 				case paneLyrics:
 					tools = a.lyricsPane(c, tr, h)
 				case paneComments:
 					a.commentsPane(c, tr)
+				case paneWiki:
+					a.wikiPane(c, tr)
 				case paneProgram:
 					a.programPane(c, tr)
 				case paneCaptions:
@@ -334,7 +473,7 @@ func (a *app) nowPlayingBody(c *ui.Context, tr *netease.Track, art *artwork, acc
 			})
 			// The lyrics' tools go under the volume, in the room the column
 			// leaves at its foot: out of its flow, which moves nothing in it.
-			if tools {
+			if tools && calm < 0.5 {
 				r, s, v := row.LayoutBounds(), col.LayoutBounds(), volume.LayoutBounds()
 				if v.H == 0 {
 					c.AnimationFrame() // not laid out yet: the next frame places them
@@ -346,15 +485,41 @@ func (a *app) nowPlayingBody(c *ui.Context, tr *netease.Track, art *artwork, acc
 	}
 }
 
-// npMaxWidth is how wide the cover and the pane beside it go, at most.
-const npMaxWidth = 1280
+// Now Playing grows with its window rather than keeping to a column in the
+// middle of it: in a wide window the room beside the cover's column, the
+// gap after it, the cover and the lyrics' type all grow, so that the
+// lyrics, still set from the left, take the width rather than leaving its
+// right empty. Past npMaxWidth the two keep together in the middle.
 
-// npSideX is how far in from the sides of a view w wide the cover and the
-// pane beside it are: in a wide window they keep together in the middle,
-// rather than the pane taking all the width the cover leaves.
+// npMaxWidth is how wide the cover's column and the pane beside it go, at
+// most.
+const npMaxWidth = 1680
+
+// npSideX is how far in from the sides of a view w wide the cover's column
+// and the pane are: a share of the width, at least 72.
 func npSideX(w float32) float32 {
-	return max(72, (w-npMaxWidth)/2)
+	return max(72, w*0.075, (w-npMaxWidth)/2)
 }
+
+// npGapX is the room between the cover's column and the pane.
+func npGapX(w float32) float32 {
+	return max(64, min(136, w*0.055))
+}
+
+// npSideMax is how large the cover goes in a view w wide, room allowing.
+func npSideMax(w float32) float32 {
+	return min(w*0.34, 540)
+}
+
+// npLyricGrow is how much larger than at its usual size the lyrics are set
+// in a pane paneW wide: none up to 640, at most a quarter more.
+func npLyricGrow(paneW float32) float32 {
+	return max(1, min(1.25, 1+(paneW-640)/1600))
+}
+
+// npLyricEdge is how far from the lyrics pane's top and foot their lines
+// fade out.
+const npLyricEdge = 72
 
 // npTabsHeight is how tall the row of Now Playing's tabs is, for what is
 // under it to start below it.
@@ -365,6 +530,15 @@ const (
 	npRowFoot    = 44  // under the cover's column, for the lyrics' tools
 	npRestGuess  = 270 // what goes under the cover, before it is laid out
 	npCoverLeast = 96  // the cover's least size, in the shortest window
+	npSideLeast  = 280 // how narrow the cover's column goes
+	// npStackWidth is the column's width under which the heart, comments
+	// and menu go under the title rather than beside it.
+	npStackWidth = 380
+	// npCardCover is how large the cover must come out over the title;
+	// smaller, it goes beside it (the card).
+	npCardCover = 150
+	npCardSlack = 16 // how much larger it must be to leave the card
+	npTitleGap  = 28 // between the cover and the title under it
 )
 
 // npTabsRow is the row of Now Playing's tabs, in the same place for every
@@ -404,6 +578,7 @@ const (
 	paneProgram
 	paneCaptions
 	paneWall
+	paneWiki
 )
 
 // npTab is a tab of Now Playing: its pane, and what it says.
@@ -422,7 +597,11 @@ func (a *app) npTabs() []npTab {
 		}
 		return append(tabs, npTab{paneQueue, "待播清单"}, npTab{paneComments, "评论"})
 	}
-	return []npTab{{paneLyrics, "歌词"}, {paneStage, "律动"}, {paneQueue, "待播清单"}, {paneWall, "选歌"}, {paneComments, "评论"}}
+	tabs := []npTab{{paneLyrics, "歌词"}, {paneStage, "律动"}, {paneQueue, "待播清单"}, {paneWall, "选歌"}, {paneComments, "评论"}}
+	if wikiShown(a.pl.Current()) {
+		tabs = append(tabs, npTab{paneWiki, "百科"})
+	}
+	return tabs
 }
 
 // paneTabs fills row with the tabs of Now Playing, a pill sliding under them
@@ -604,10 +783,17 @@ func (a *app) lyricsPane(c *ui.Context, tr *netease.Track, h float32) bool {
 
 	scroll := ui.Scroll(c.Key("lyrics")).Grow(1).TrackScroll(&a.lyricScroll).Padding(0, 8, h*0.5, 0)
 	a.lyricFace(scroll)
+	// The lines dissolve at the pane's edges rather than being cut there:
+	// a blurred line cut in half showed as a hard seam. The perspective
+	// lyrics fade the pane as a whole, through an image of it; the flat
+	// ones fade each line by where it is (linesStyle.edges), which costs
+	// nothing: redrawing the image each frame made resizing the window
+	// stutter.
 	if a.settings.LyricPerspective {
 		scroll.Effect(scrollEdgeFade{depth: 72, top: easeRange(a.lyricScroll.Y, 0, 16), bottom: 1})
 	}
-	st := linesStyle{size: 30 * a.lyricScale(), weight: 800, lineHeight: 1.25, shift: shift}
+	st := linesStyle{size: 30 * a.lyricScale() * npLyricGrow(a.more.npPaneW), weight: 800, lineHeight: 1.25, shift: shift,
+		edges: !a.settings.LyricPerspective}
 	if a.settings.LyricPerspective {
 		st.tilt = 2 * clamp01(float32(a.settings.LyricTilt))
 		if a.motion != motionOff {
@@ -622,6 +808,10 @@ func (a *app) lyricsPane(c *ui.Context, tr *netease.Track, h float32) bool {
 		scroll.Padding(st.focusY, 8+st.arcInset*st.tilt, max(h*0.5, box.H-st.focusY), 0).
 			TransformOrigin(0, st.focusY/box.H).RotateY(-19 * st.tilt).Perspective(max(700, box.W*2.7))
 	}
+	// The perspective lyrics blur as they always did; the regular view
+	// as the listener chose. Never to save power.
+	st.blurLevel = clamp01(float32(a.settings.LyricBlurLevel))
+	st.blur = (st.focusY > 0 || a.settings.LyricBlur) && !a.settings.PowerSaver && st.blurLevel > 0
 	dim, quiet := a.quietShown(c, scroll, tr, lines, loaded)
 	if dim > 0.98 {
 		// Under the hot comment, gone, not drawn faint.
@@ -640,6 +830,9 @@ type linesStyle struct {
 	weight     int
 	lineHeight float32
 	focusY     float32 // active line's anchor in the pane, or 0 in the regular view
+	blur       bool    // the lines other than the one sung are blurred
+	blurLevel  float32 // how much, 0 to 1, 0.5 as designed
+	edges      bool    // lines fade as they near the pane's top and foot
 	arcY       float32 // arc center in the previous layout's coordinates
 	arcInset   float32 // horizontal room reserved for the arc's rightmost point
 	arcRadius  float32
@@ -657,6 +850,7 @@ type linesStyle struct {
 func (a *app) timedLines(c *ui.Context, scroll ui.Element, lines []lyrics.Line, pos time.Duration, cur int, lag float32, st linesStyle, foot func()) {
 	pl := a.pl
 	var active ui.Element
+	view := scroll.LayoutBounds()
 	scroll.Children(func() {
 		ui.Column(c).Gap(6).Translate(0, -lag).Children(func() {
 			for i, l := range lines {
@@ -671,14 +865,23 @@ func (a *app) timedLines(c *ui.Context, scroll ui.Element, lines []lyrics.Line, 
 					alpha = 0.55
 				}
 				blur := float32(0)
-				if st.focusY > 0 && !on && !hovered && !line.FocusVisible() && !a.settings.PowerSaver {
+				if st.blur && cur >= 0 && !on && !hovered && !line.FocusVisible() {
 					distance := abs32(float32(i - cur))
 					alpha *= 1 - 0.5*clamp01((distance-1)/4)
-					blur = min(4, 0.9*distance)
+					k := 2 * st.blurLevel
+					blur = min(4*k, 0.9*distance*k)
 				}
 				if st.quiet {
 					// Nearly gone under a hot comment.
 					alpha *= quietFaded
+				}
+				if b := line.LayoutBounds(); st.edges && view.H > 0 && b.H > 0 {
+					// Where it is in the pane, as it shows, held back by lag.
+					mid := b.Y + b.H/2 - lag - view.Y
+					edge := min(easeRange(mid, 0, npLyricEdge), easeRange(view.H-mid, 0, npLyricEdge))
+					if edge < 1 {
+						line.Opacity(edge)
+					}
 				}
 				if hovered {
 					line.Background(white.Alpha(0.06))
@@ -705,7 +908,7 @@ func (a *app) timedLines(c *ui.Context, scroll ui.Element, lines []lyrics.Line, 
 					// than building the view at the display's rate as it does.
 					text := ui.Column(c).AlignItems(ui.Start).Gap(6)
 					text.AnimatePose(ui.Pose{Fade: 1 - alpha}, ui.Animation{Duration: 380 * time.Millisecond})
-					if st.focusY > 0 && !a.settings.PowerSaver {
+					if st.blur {
 						text.Blur(text.AnimateTo("depth", blur, ui.Animation{Duration: 300 * time.Millisecond}))
 					}
 					text.Children(func() {

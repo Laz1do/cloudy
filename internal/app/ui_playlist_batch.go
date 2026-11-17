@@ -411,8 +411,9 @@ func (a *app) songsBar(c *ui.Context, tracks []netease.Track, liked bool, foregr
 		like := pillButton(c.Key("batch-like"), likeIcon, likeLabel, pal.hover.Over(pal.bg), pal.text)
 		next := pillButton(c.Key("batch-next"), iconNext, "下一首播放", pal.hover.Over(pal.bg), pal.text)
 		queue := pillButton(c.Key("batch-queue"), iconQueue, "加入队列", pal.hover.Over(pal.bg), pal.text)
+		toList := pillButton(c.Key("batch-playlist"), iconPlus, "加入歌单", pal.hover.Over(pal.bg), pal.text)
 		if chosenN == 0 {
-			for _, b := range []ui.Element{download, like, next, queue} {
+			for _, b := range []ui.Element{download, like, next, queue, toList} {
 				b.Disabled(true).Opacity(0.5)
 			}
 		}
@@ -434,6 +435,10 @@ func (a *app) songsBar(c *ui.Context, tracks []netease.Track, liked bool, foregr
 			a.playNext(take())
 		case queue.Clicked():
 			a.addAllToQueue(take())
+		case toList.Clicked():
+			// The choice stays until a playlist is picked: the menu may
+			// be closed without one.
+			a.addAllMenu(toList, false, a.chosenOf(tracks))
 		}
 		if pillButton(c.Key("batch-cancel"), nil, "取消", pal.hover.Over(pal.bg), pal.text).Clicked() {
 			a.cancelBatch()

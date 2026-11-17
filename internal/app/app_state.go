@@ -34,6 +34,10 @@ type downloadState struct {
 	// files is the file of each song in items, by its ID, for the player,
 	// which reads it off the window's goroutine; noteDownloads keeps it.
 	files atomic.Value // map[int64]string
+	// rev counts the changes to items; tracks are they as the player
+	// queues them, made once for tracksRev, not each frame.
+	rev, tracksRev int
+	tracks         []netease.Track
 }
 
 // scanCount is how many of how many songs a scan has read, as it reads.
@@ -75,8 +79,11 @@ type settingsView struct {
 	query        string
 	searchBox    ui.Handle
 	searchScroll ui.ScrollState
-	dirty        bool       // a slider moved, and the settings are not kept yet
-	accentDraft  accentPick // the color well open, and the color it shows
-	fontPick     fontPicker // the dialog of the system's fonts
-	confirmGlass bool       // asking before enabling global liquid glass
+	dirty        bool                   // a slider moved, and the settings are not kept yet
+	accentDraft  accentPick             // the color well open, and the color it shows
+	fontPick     fontPicker             // the dialog of the system's fonts
+	confirmGlass bool                   // asking before enabling global liquid glass
+	materialOpen bool                   // the parts of the material show, to set each
+	thumbs       map[string]*sceneThumb // the backdrops' pictures on their cards
+	preview      npPreview              // Now Playing in small, at the head of its page
 }

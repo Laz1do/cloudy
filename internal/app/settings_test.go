@@ -20,7 +20,8 @@ func TestGlobalGlassRequiresConfirmation(t *testing.T) {
 	a := newTestApp()
 	a.settings = defaultSettings()
 	a.settings.path = filepath.Join(t.TempDir(), "settings.json")
-	a.settingsView.open, a.settingsView.tab = true, settingsEffects
+	a.settingsView.open, a.settingsView.tab = true, settingsAppearance
+	a.settingsView.materialOpen = true
 	tt := ui.NewTester(a.view, 1000, 700)
 	tt.SetPreferences(ui.Preferences{ReduceMotion: true})
 	tt.Frame()
@@ -72,23 +73,25 @@ func TestSettingsCategoryNavigation(t *testing.T) {
 	}
 	toggle := func(label, desc string) {
 		t.Helper()
+		// What a row has to say is under its card, or a tooltip: the row
+		// is its name.
+		_ = desc
 		title, ok1 := tt.Find(label)
-		note, ok2 := tt.Find(desc)
 		pane, ok3 := tt.Find(settingsCategories[a.settingsView.tab].label + "设置项")
-		if !ok1 || !ok2 || !ok3 {
+		if !ok1 || !ok3 {
 			t.Fatalf("the %s control is not in this category", label)
 		}
-		tt.ClickAt(pane.X+pane.W-30-20-12, (title.Y+note.Y+note.H)/2)
+		tt.ClickAt(pane.X+pane.W-30-14-22, title.Y+title.H/2)
 		tt.Frame()
 	}
-	choose("视觉效果", settingsEffects)
+	choose("外观", settingsAppearance)
 	wasAccent := a.settings.AccentCover
 	a.settings.AccentCover = !wasAccent
-	pane, _ := tt.Find("视觉效果设置项")
+	pane, _ := tt.Find("外观设置项")
 	tt.Scroll(pane.X+40, pane.Y+pane.H/2, 0, 320)
 	tt.Advance(time.Second)
 	tt.Frame()
-	at := a.settingsView.scroll[settingsEffects].Y
+	at := a.settingsView.scroll[settingsAppearance].Y
 	if at <= 0 {
 		t.Fatal("the effects category did not scroll")
 	}
@@ -96,13 +99,13 @@ func TestSettingsCategoryNavigation(t *testing.T) {
 	if a.settingsView.scroll[settingsAccount].Y != 0 || a.settings.AccentCover == wasAccent {
 		t.Fatal("switching categories lost the edit or shared the scroll position")
 	}
-	choose("视觉效果", settingsEffects)
-	if math.Abs(float64(a.settingsView.scroll[settingsEffects].Y-at)) > 1 {
+	choose("外观", settingsAppearance)
+	if math.Abs(float64(a.settingsView.scroll[settingsAppearance].Y-at)) > 1 {
 		t.Fatal("returning to effects lost its scroll position")
 	}
 	choose("播放", settingsPlayback)
 	choose("关于", settingsAbout)
-	toggle("自动安装更新", "在后台下载并装好新版本，不弹窗，下次打开软件时生效")
+	toggle("自动安装更新", "后台发现新版本时直接装好，下次打开软件时生效；手动检查仍会先问你")
 	if !a.settings.UpdateInstall {
 		t.Fatal("the update preference did not change")
 	}
@@ -172,7 +175,12 @@ func TestSettingsEveryCategory(t *testing.T) {
 		}
 	}
 	for _, label := range []string{"律动效果", "桌面歌词字号", "歌词字号"} {
-		if err := tt.Click("设置分类：歌词"); err != nil {
+		// The desk lyrics' are with the lyrics, the rest with Now Playing.
+		page := "播放页"
+		if label == "桌面歌词字号" {
+			page = "歌词"
+		}
+		if err := tt.Click("设置分类：" + page); err != nil {
 			t.Fatal(err)
 		}
 		tt.Frame()
@@ -259,7 +267,7 @@ func TestSettingsSearchFrames(t *testing.T) {
 		name, query string
 		tab         settingsCategory
 		dark        bool
-	}{{"settings-search.png", "缓存", 0, true}, {"settings-light.png", "", settingsEffects, false}} {
+	}{{"settings-search.png", "缓存", 0, true}, {"settings-light.png", "", settingsAppearance, false}} {
 		a := newTestApp()
 		a.settings = defaultSettings()
 		a.settingsView.open, a.updates = true, true

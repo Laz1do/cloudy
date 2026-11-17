@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"image"
 	_ "image/gif"
+	"os"
 	"path/filepath"
 	"strings"
 
@@ -51,11 +52,17 @@ func saveTrackCover(song netease.Track, parent *mygo.Window) (bool, error) {
 	if err != nil || path == "" {
 		return false, err
 	}
-	// Do not silently change the chosen destination after the dialog has
-	// confirmed whether to overwrite it, nor write PNG bytes as a JPEG.
+	// Never write PNG bytes under a .jpg name: give the file the image's
+	// extension. The dialog only asked about overwriting the name chosen,
+	// so a different name that already exists is not replaced.
 	chosen := strings.ToLower(strings.TrimPrefix(filepath.Ext(path), "."))
 	if chosen != ext && !(format == "jpeg" && chosen == "jpeg") {
-		return false, fmt.Errorf("请使用 .%s 扩展名保存封面", ext)
+		path = strings.TrimSuffix(path, filepath.Ext(path)) + "." + ext
+		if _, err := os.Lstat(path); err == nil {
+			return false, fmt.Errorf("%s 已存在，请重新选择保存位置", filepath.Base(path))
+		} else if !os.IsNotExist(err) {
+			return false, err
+		}
 	}
 	if err := writeFileAtomic(path, b, 0o644); err != nil {
 		return false, err

@@ -39,13 +39,7 @@ func (a *app) boot() {
 	go func() {
 		var prof *netease.Profile
 		if netease.RestoreSession() {
-			p, err := netease.Account()
-			switch {
-			case err == nil && p == nil:
-				netease.ClearSession() // expired
-			case err == nil:
-				prof = p
-			}
+			prof = accountAtBoot()
 		}
 		a.post(func() {
 			a.signedIn(prof)
@@ -554,3 +548,35 @@ func (a *app) playlistRows(c *ui.Context, lists []netease.Playlist, mine bool) {
 		}
 	}
 }
+
+// bootRetries is how long, and how often, the session in the keychain is
+// tried again while NetEase cannot be reached: started at login, the app
+// opens before the network is up, and a first failed try showed the
+// listener signed out at every boot. Tests shorten it.
+var bootRetries = struct {
+	every time.Duration
+	tries int
+}{3 * time.Second, 40}
+
+// accountAtBoot returns who the session restored belongs to, asking again
+// while the network is not up yet, or nil once NetEase says the session
+// has expired (forgetting it then) or still cannot be reached after
+// bootRetries. Only an answer from NetEase signs the listener out.
+func accountAtBoot() *netease.Profile {
+	for try := 0; ; try++ {
+		p, err := accountOf()
+		switch {
+		case err == nil && p == nil:
+			netease.ClearSession() // expired
+			return nil
+		case err == nil:
+			return p
+		case try+1 >= bootRetries.tries:
+			return nil
+		}
+		time.Sleep(bootRetries.every)
+	}
+}
+
+// accountOf is netease.Account; tests replace it.
+var accountOf = netease.Account

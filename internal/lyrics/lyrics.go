@@ -153,6 +153,42 @@ func Build(lrc, translation, yrc string) []Line {
 	return lines
 }
 
+// KeepTranslations gives the lines of more, word-timed lyrics from
+// elsewhere, the translations of from, NetEase's, if it has any: each goes
+// to the line of more nearest its time, in place of more's own (Kugou's
+// are often a machine's). Without any in from, more keeps its own.
+func KeepTranslations(more, from []Line) []Line {
+	has := false
+	for _, f := range from {
+		has = has || f.Translation != ""
+	}
+	if !has {
+		return more
+	}
+	for i := range more {
+		more[i].Translation = ""
+	}
+	for _, f := range from {
+		if f.Translation == "" {
+			continue
+		}
+		best, bestGap := -1, 1500*time.Millisecond
+		for i := range more {
+			gap := more[i].At - f.At
+			if gap < 0 {
+				gap = -gap
+			}
+			if gap < bestGap {
+				best, bestGap = i, gap
+			}
+		}
+		if best >= 0 && more[best].Translation == "" {
+			more[best].Translation = f.Translation
+		}
+	}
+	return more
+}
+
 // mergeLyrics pairs timed lines with their translations, without words'
 // own times.
 func mergeLyrics(lrc, translation string) []Line {

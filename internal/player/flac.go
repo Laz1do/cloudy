@@ -185,7 +185,7 @@ func (s *flacStream) SetPosition(target int64) error {
 func (s *flacStream) frameAfter(off, end int64) (int64, int64, bool) {
 	w := window{dl: s.dl}
 	for ; off+2 < end; off++ {
-		if s.dl.waitFor(off+2) < off+2 {
+		if !s.dl.waitAt(off, 2) {
 			return 0, 0, false
 		}
 		b := w.at(off, 2)

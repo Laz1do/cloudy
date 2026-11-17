@@ -10,6 +10,7 @@ import (
 	"math/cmplx"
 	"net/http"
 	"os"
+	"strconv"
 	"sync"
 	"time"
 
@@ -41,28 +42,46 @@ type download struct {
 	cancel context.CancelFunc
 	// part is the file's path until the cache keeps it, which keep does
 	// once the song has all come in: the path it is at then.
-	part string
-	keep func(part string, n int64) (string, bool)
+	part   string
+	keep   func(part string, n int64) (string, bool)
+	settle func(string)
 	// users counts what reads or writes the song: the stream decoding it,
 	// until it closes, and the goroutine fetching it. The last to go
 	// closes the file, and removes it unless the cache kept it.
 	users  int
 	closed bool
+	// base is what stops every connection of the download, and url
+	// where the song is: a reader that wants bytes far past what is in
+	// has a connection of its own fetch them from there (jump), into
+	// the file where they belong: ahead, which has brought in the bytes
+	// from a0 up to a1. The head, on its way, takes them as it meets
+	// them. noJump is set once the server would send no part of the
+	// song, and jumpFails counts the connections ahead that failed.
+	base      context.Context
+	url       string
+	ahead     *fetcher
+	a0, a1    int64
+	noJump    bool
+	jumpFails int
 }
 
 // startDownload fetches url, of size bytes if known, into part, a file
 // that keep keeps once it has all come in: or into memory, without one.
-func startDownload(url string, size int64, part *os.File, keep func(string, int64) (string, bool)) *download {
+func startDownload(url string, size int64, part *os.File,
+	keep func(string, int64) (string, bool), settle func(string)) *download {
 	ctx, cancel := context.WithCancel(context.Background())
-	d := &download{size: size, cancel: cancel, users: 2}
+	d := &download{size: size, cancel: cancel, users: 2, base: ctx, url: url}
 	d.cond.L = &d.mu
 	switch {
 	case part != nil:
-		d.file, d.part, d.keep = part, part.Name(), keep
+		d.file, d.part, d.keep, d.settle = part, part.Name(), keep, settle
 	case size > 0:
 		d.data = make([]byte, 0, prealloc(size))
 	}
-	go d.run(ctx, url)
+	head := &fetcher{head: true}
+	hctx, stop := context.WithCancelCause(ctx)
+	head.cancel = stop
+	go d.fetch(hctx, head, 0)
 	return d
 }
 
@@ -101,56 +120,128 @@ type streamHTTPError struct {
 
 func (e *streamHTTPError) Error() string { return e.status }
 
-func (d *download) run(ctx context.Context, url string) {
+// A fetcher is a connection fetching a download: its head, from the
+// start, which brings in all of the song; or the one ahead
+// (download.ahead), from where a reader jumped to, past what the head
+// had brought in.
+type fetcher struct {
+	cancel context.CancelCauseFunc
+	head   bool // it brings in the head: only the head ends the download
+	ended  bool // ahead, it reached the song's end
+}
+
+// jumpGap is how far past what is in a reader must want bytes for a
+// connection of its own to fetch them: nearer, the one that is coming
+// gets there sooner than a new one would.
+const jumpGap = 256 << 10
+
+// jumpTries is how many connections ahead may fail before a download
+// gives them up, and its readers wait for the head as they did.
+const jumpTries = 3
+
+// What put says of the bytes it took: more are wanted, the fetcher is
+// to stop, or the song is whole.
+const (
+	putOn = iota
+	putStop
+	putWhole
+)
+
+// fetch fetches the song from byte from on, for f.
+func (d *download) fetch(ctx context.Context, f *fetcher, from int64) {
 	defer d.release()
+	defer f.cancel(nil)
 	// A stalled connection gets reopened by the player. Resetting on bytes
 	// leaves long songs unlimited, while a dead socket cannot wait forever.
-	ctx, cancel := context.WithCancelCause(ctx)
-	defer cancel(nil)
-	idle := time.AfterFunc(20*time.Second, func() { cancel(context.DeadlineExceeded) })
+	idle := time.AfterFunc(20*time.Second, func() { f.cancel(context.DeadlineExceeded) })
 	defer idle.Stop()
+	// finish ends the download, if f is its head. One ahead that failed
+	// only goes, with what it brought in: its readers wait for the head.
 	finish := func(err error) {
 		d.mu.Lock()
-		d.done, d.err = true, err
+		defer d.mu.Unlock()
+		if f.head {
+			d.done, d.err = true, err
+		} else if d.ahead == f {
+			d.ahead, d.a0, d.a1 = nil, 0, 0
+			d.jumpFails++
+		}
 		d.cond.Broadcast()
-		d.mu.Unlock()
 	}
-	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	// whole ends the download with all of the song in: the cache's, if
+	// it is as long as promised.
+	whole := func() {
+		if d.keep != nil && d.part != "" && (d.size <= 0 || d.n == d.size) {
+			d.hand()
+		}
+		finish(nil)
+	}
+	req, err := http.NewRequestWithContext(ctx, "GET", d.url, nil)
 	if err != nil {
 		finish(err)
 		return
 	}
 	req.Header.Set("User-Agent", netease.UserAgent)
+	want := http.StatusOK
+	if from > 0 {
+		req.Header.Set("Range", "bytes="+strconv.FormatInt(from, 10)+"-")
+		want = http.StatusPartialContent
+	}
 	res, err := http.DefaultClient.Do(req)
 	if err != nil {
 		finish(cmp.Or(context.Cause(ctx), err))
 		return
 	}
 	defer res.Body.Close()
-	if res.StatusCode != http.StatusOK {
+	if res.StatusCode != want {
+		if from > 0 && res.StatusCode == http.StatusOK {
+			// The server sends the song only whole: no part of it is
+			// asked for again.
+			d.mu.Lock()
+			d.noJump = true
+			d.mu.Unlock()
+		}
 		finish(&streamHTTPError{code: res.StatusCode, status: res.Status})
 		return
 	}
 	buf := make([]byte, 64<<10)
+	at := from
 	for {
 		n, err := res.Body.Read(buf)
 		if n > 0 {
 			idle.Reset(20 * time.Second)
-			if err := d.write(buf[:n]); err != nil {
-				finish(err)
+			state, werr := d.put(f, buf[:n], at)
+			at += int64(n)
+			switch {
+			case werr != nil:
+				finish(werr)
+				return
+			case state == putStop:
+				return
+			case state == putWhole:
+				whole()
 				return
 			}
 		}
 		if err == io.EOF {
-			if d.size > 0 && d.n < d.size {
+			d.mu.Lock()
+			if !f.head {
+				// Ahead, at the song's end: the head, when it meets
+				// what this brought in, has it all.
+				if d.ahead == f {
+					f.ended = true
+				}
+				d.cond.Broadcast()
+				d.mu.Unlock()
+				return
+			}
+			short := d.size > 0 && d.n < d.size
+			d.mu.Unlock()
+			if short {
 				finish(io.ErrUnexpectedEOF)
 				return
 			}
-			// Whole if as long as promised: the cache's.
-			if d.keep != nil && d.part != "" && (d.size <= 0 || d.n == d.size) {
-				d.hand()
-			}
-			finish(nil)
+			whole()
 			return
 		}
 		if err != nil {
@@ -160,21 +251,38 @@ func (d *download) run(ctx context.Context, url string) {
 	}
 }
 
-// write adds b to what is in. Only run writes, so it reads the file and
-// what is in without the lock, which guards them from readers.
-func (d *download) write(b []byte) error {
-	if d.file != nil {
-		if _, err := d.file.Write(b); err != nil {
+// put adds b, the song's bytes from at on, which f fetched: to what is
+// in, for the head, or to what is ahead. The head that meets what was
+// fetched ahead takes it: and stops, leaving the connection ahead, if
+// it still fetches, to bring in the rest as the head.
+func (d *download) put(f *fetcher, b []byte, at int64) (int, error) {
+	d.mu.Lock()
+	file, head := d.file, f.head
+	d.mu.Unlock()
+	if file != nil {
+		if _, err := file.WriteAt(b, at); err != nil {
+			if !head {
+				return putStop, err
+			}
 			if err := d.toMemory(); err != nil {
-				return err
+				return putStop, err
 			}
 		}
 	}
 	d.mu.Lock()
 	defer d.mu.Unlock()
+	if !f.head {
+		if d.ahead != f {
+			// Another jump took its place.
+			return putStop, nil
+		}
+		d.a1 = at + int64(len(b))
+		d.cond.Broadcast()
+		return putOn, nil
+	}
 	if d.file == nil {
 		if d.n+int64(len(b)) > maxMemoryDownload {
-			return errDownloadMemory
+			return putStop, errDownloadMemory
 		}
 		if need := len(d.data) + len(b); need > cap(d.data) {
 			next := make([]byte, len(d.data), min(maxMemoryDownload, max(need, 2*cap(d.data))))
@@ -184,8 +292,76 @@ func (d *download) write(b []byte) error {
 		d.data = append(d.data, b...)
 	}
 	d.n += int64(len(b))
+	state := putOn
+	if a := d.ahead; a != nil && d.n >= d.a0 {
+		d.n = max(d.n, d.a1)
+		d.ahead, d.a0, d.a1 = nil, 0, 0
+		if a.ended {
+			state = putWhole
+		} else {
+			a.head, f.head = true, false
+			state = putStop
+		}
+	}
 	d.cond.Broadcast()
-	return nil
+	return state, nil
+}
+
+// avail returns how many bytes are in from off on, without a gap. Its
+// caller holds the lock.
+func (d *download) avail(off int64) int64 {
+	switch {
+	case off < 0:
+		return 0
+	case off < d.n:
+		return d.n - off
+	case d.ahead != nil && off >= d.a0 && off < d.a1:
+		return d.a1 - off
+	}
+	return 0
+}
+
+// jump has a connection of its own fetch the song from off on, if that
+// is far past what is in and no connection ahead is about to get there:
+// the listener jumped ahead in a song still coming in, and hears it from
+// there without waiting for all that lies before. Its caller holds the
+// lock.
+func (d *download) jump(off int64) {
+	if d.file == nil || d.size <= 0 || d.base == nil || d.done || d.noJump || d.jumpFails >= jumpTries || d.users <= 0 {
+		return
+	}
+	if off < d.n+jumpGap || off >= d.size {
+		return
+	}
+	if d.ahead != nil {
+		if off >= d.a0 && off <= d.a1+jumpGap {
+			return
+		}
+		d.ahead.cancel(context.Canceled)
+	}
+	f := &fetcher{}
+	ctx, stop := context.WithCancelCause(d.base)
+	f.cancel = stop
+	d.ahead, d.a0, d.a1 = f, off, off
+	d.users++
+	go d.fetch(ctx, f, off)
+}
+
+// waitAt waits until the n bytes from off on are in, or the download
+// ended, and reports whether they are. The stream that plays, waiting
+// far past what is in, has them fetched from there (jump).
+func (d *download) waitAt(off, n int64) bool {
+	view := d
+	d = d.root()
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	for d.avail(off) < n && !d.done && view.errContext() == nil {
+		if view.parent == nil {
+			d.jump(off)
+		}
+		d.cond.Wait()
+	}
+	return view.errContext() == nil && d.avail(off) >= n
 }
 
 // toMemory moves the song into memory from a file that takes no more, as
@@ -203,6 +379,11 @@ func (d *download) toMemory() error {
 	d.file.Close()
 	os.Remove(d.part)
 	d.file, d.part = nil, ""
+	// What was fetched ahead was in the file only.
+	if d.ahead != nil {
+		d.ahead.cancel(context.Canceled)
+		d.ahead, d.a0, d.a1 = nil, 0, 0
+	}
 	return nil
 }
 
@@ -215,6 +396,9 @@ func (d *download) hand() {
 	d.file.Close()
 	path, ok := d.keep(d.part, d.n)
 	f, err := os.Open(path)
+	if ok && d.settle != nil {
+		d.settle(path)
+	}
 	if err != nil {
 		d.file, d.n, d.done, d.err = nil, 0, true, err
 		return
@@ -269,6 +453,7 @@ func (d *download) release() {
 		os.Remove(d.part)
 	}
 	d.file, d.data, d.n, d.part = nil, nil, 0, ""
+	d.ahead, d.a0, d.a1 = nil, 0, 0
 }
 
 // Progress returns the share of the song downloaded so far.
@@ -317,12 +502,12 @@ func (d *download) errContext() error {
 // readAt reads into b what is in from off, as much as fits. Its caller
 // holds the lock.
 func (d *download) readAt(b []byte, off int64) (int, error) {
-	n := min(int64(len(b)), d.n-off)
+	n := min(int64(len(b)), d.avail(off))
 	if n <= 0 {
 		return 0, nil
 	}
 	if d.file == nil {
-		return copy(b, d.data[off:d.n]), nil
+		return copy(b, d.data[off:off+n]), nil
 	}
 	return d.file.ReadAt(b[:n], off)
 }
@@ -365,13 +550,16 @@ func (r *downloadReader) Read(p []byte) (int, error) {
 	d := r.d.root()
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	for d.n <= r.pos && !d.done && r.d.errContext() == nil {
+	for d.avail(r.pos) <= 0 && !d.done && r.d.errContext() == nil {
+		if r.d.parent == nil {
+			d.jump(r.pos)
+		}
 		d.cond.Wait()
 	}
 	if err := r.d.errContext(); err != nil {
 		return 0, err
 	}
-	if d.n <= r.pos {
+	if d.avail(r.pos) <= 0 {
 		if d.err != nil {
 			return 0, d.err
 		}
@@ -599,13 +787,12 @@ func (s *mp3Stream) Close() error {
 func findFrame(dl *download, off int64) int64 {
 	w := window{dl: dl}
 	for tries := 0; tries < 64<<10; tries++ {
-		have := dl.waitFor(off + 4)
-		if have < off+4 {
+		if !dl.waitAt(off, 4) {
 			return off
 		}
 		size := frameSize(w.at(off, 4))
 		if size > 0 {
-			dl.waitFor(off + int64(size) + 4)
+			dl.waitAt(off+int64(size), 4)
 			next := w.at(off+int64(size), 4)
 			if len(next) < 4 || frameSize(next) > 0 {
 				return off
@@ -778,4 +965,13 @@ func fft(x []complex128) {
 			}
 		}
 	}
+}
+
+// write adds b after what is in, as the head does.
+func (d *download) write(b []byte) error {
+	d.mu.Lock()
+	at := d.n
+	d.mu.Unlock()
+	_, err := d.put(&fetcher{head: true}, b, at)
+	return err
 }

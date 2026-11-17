@@ -88,3 +88,12 @@ func TestClearUpcoming(t *testing.T) {
 		t.Errorf("order %v at %d", got, p.at)
 	}
 }
+
+func TestClear(t *testing.T) {
+	p := queued(2, 1, 2, 3, 4)
+	p.track = &p.queue[p.order[p.at]]
+	p.Clear()
+	if len(p.Queue()) != 0 || p.Current() != nil || p.at != -1 || p.Playing() {
+		t.Errorf("left %d songs, current %v, at %d", len(p.Queue()), p.Current(), p.at)
+	}
+}

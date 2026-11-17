@@ -76,7 +76,8 @@ func TestSaveTrackCover(t *testing.T) {
 }
 
 // Canceling, failed fetches, invalid images and write errors never report
-// success; a mismatched extension never overwrites the user's file.
+// success; a mismatched extension is corrected, and never overwrites a file
+// the dialog did not ask about.
 func TestSaveTrackCoverFailures(t *testing.T) {
 	old := chooseCoverFile
 	t.Cleanup(func() { chooseCoverFile = old })
@@ -93,11 +94,22 @@ func TestSaveTrackCoverFailures(t *testing.T) {
 	target := filepath.Join(dir, "existing.jpg")
 	os.WriteFile(target, []byte("keep me"), 0o600)
 	chooseCoverFile = func(mygo.SaveDialogOptions) (string, error) { return target, nil }
-	if ok, err := saveTrackCover(song, nil); ok || err == nil {
+	if ok, err := saveTrackCover(song, nil); !ok || err != nil {
 		t.Fatalf("mismatched extension: %v, %v", ok, err)
 	}
 	if got, _ := os.ReadFile(target); string(got) != "keep me" {
 		t.Fatal("overwrote the file with another image format")
+	}
+	fixed := filepath.Join(dir, "existing.png")
+	if got, _ := os.ReadFile(fixed); !bytes.Equal(got, b.Bytes()) {
+		t.Fatal("did not save the cover under its own extension")
+	}
+	os.WriteFile(fixed, []byte("keep me too"), 0o600)
+	if ok, err := saveTrackCover(song, nil); ok || err == nil {
+		t.Fatalf("corrected name exists: %v, %v", ok, err)
+	}
+	if got, _ := os.ReadFile(fixed); string(got) != "keep me too" {
+		t.Fatal("overwrote a file the dialog did not ask about")
 	}
 	blocked := filepath.Join(dir, "folder.png")
 	os.Mkdir(blocked, 0o700)

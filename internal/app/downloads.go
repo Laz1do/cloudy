@@ -124,6 +124,7 @@ func (a *app) setDownloadFolder(dir string) {
 	a.settings.save()
 	a.dl.pathDraft = a.downloadFolder()
 	a.dl.loaded, a.dl.items, a.dl.err = false, nil, ""
+	a.dl.rev++
 	a.loadDownloads(true)
 	a.redraw()
 }
@@ -389,12 +390,18 @@ func (a *app) saveDownloads() error {
 // downloadTracks are the downloaded songs as the player queues them: each
 // one plays from its file, whatever NetEase would say of the song now.
 func (a *app) downloadTracks() []netease.Track {
+	// Made again only when the downloads changed: a fresh slice each frame
+	// also kept the search and the sort of the page from being cached.
+	if a.dl.tracks != nil && a.dl.tracksRev == a.dl.rev && len(a.dl.tracks) == len(a.dl.items) {
+		return a.dl.tracks
+	}
 	tracks := make([]netease.Track, 0, len(a.dl.items))
 	for _, it := range a.dl.items {
 		tr := it.Track
 		tr.LocalPath, tr.Privilege, tr.Fee, tr.ProgramID, tr.Reason = it.Path, nil, 0, 0, ""
 		tracks = append(tracks, tr)
 	}
+	a.dl.tracks, a.dl.tracksRev = tracks, a.dl.rev
 	return tracks
 }
 
@@ -417,6 +424,7 @@ func (a *app) downloadBytes() int64 {
 // a.dl.items changed: a song downloaded plays from its file wherever it is
 // started from.
 func (a *app) noteDownloads() {
+	a.dl.rev++
 	files := make(map[int64]string, len(a.dl.items))
 	for _, it := range a.dl.items {
 		if id := it.Track.ID; id > 0 && files[id] == "" {
@@ -514,13 +522,19 @@ func (a *app) pumpDownload() {
 		return
 	}
 	level := a.downloadLevel()
-	q.run(tr, a.post, func(ctx context.Context, progress func(done, size int64)) func() {
+	q.run(tr, a.post, a.postQuiet(a.downloadProgressShown), func(ctx context.Context, progress func(done, size int64)) func() {
 		item, err := fetchDownload(ctx, tr, level, dir, progress)
 		if err == nil {
 			item.Tagged = tagDownload(item)
 		}
 		return func() { a.finishDownload(item, err) }
 	})
+}
+
+// downloadProgressShown reports whether how far the song downloading has
+// come is on screen: on the downloads page, or in the queue's window.
+func (a *app) downloadProgressShown() bool {
+	return a.dl.view.open || a.route.page == pageDownloads && !a.nowPlaying
 }
 
 // finishDownload lists what arrived, or says why it did not, and starts the
@@ -694,6 +708,7 @@ func (a *app) downloadedSongActions(tr *netease.Track) [][]menuAction {
 		},
 		{{label: "在文件夹中显示", icon: iconFolder, do: func() { mygo.Shell.ShowItemInFolder(tr.LocalPath) }}},
 	}
+	groups = append(groups, []menuAction{{label: "下载歌词", icon: iconLyrics, do: func() { a.openLyricDownload(song) }}})
 	// Only what Cloudy downloaded: the listener's own music stays theirs.
 	if a.inDownloads(tr.LocalPath) {
 		groups = append(groups, []menuAction{{label: "从本地删除", icon: iconTrash, do: func() { a.confirmDeleteDownload(*tr) }}})

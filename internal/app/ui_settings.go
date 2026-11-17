@@ -16,10 +16,10 @@ type settingsCategory int
 const (
 	settingsAccount settingsCategory = iota
 	settingsPlayback
+	settingsNowPlaying
 	settingsLyrics
-	settingsPodcast
 	settingsAppearance
-	settingsEffects
+	settingsHome
 	settingsStorage
 	settingsSystem
 	settingsAbout
@@ -27,20 +27,24 @@ const (
 )
 
 // settingsCategories are the settings' destinations, in the order the
-// sidebar lists them: a section names the ones from it to the next.
+// sidebar lists them, the account first, as a card of its own: gap sets
+// one apart from those above it, and blurb says under its name what it
+// holds.
 var settingsCategories = [...]struct {
-	label, section string
-	icon           *ui.SVG
+	label string
+	gap   bool
+	icon  *ui.SVG
+	blurb string
 }{
-	{"账号", "", iconUser},
-	{"播放", "听歌", iconHeadset},
-	{"歌词", "", iconLyrics},
-	{"播客", "", iconPodcast},
-	{"外观", "界面", iconSun},
-	{"视觉效果", "", iconSparkles},
-	{"下载与缓存", "系统", iconDownload},
-	{"快捷键与窗口", "", iconKeyboard},
-	{"关于", "", iconInfo},
+	{"账号", false, iconUser, "网易云账号和听歌记录。"},
+	{"播放", false, iconHeadset, "音质、声音和定时关闭。"},
+	{"播放页", false, iconSparkles, "背景、光效和歌词排版，改动会立刻出现在下面的预览里。"},
+	{"歌词", false, iconLyrics, "歌词显示什么，以及桌面歌词。"},
+	{"外观", true, iconSun, "主题、颜色和窗口材质。"},
+	{"首页与侧栏", false, iconHome, "首页台历和侧边栏。"},
+	{"下载与缓存", true, iconDownload, "下载、本地音乐和歌曲缓存。"},
+	{"快捷键与窗口", false, iconKeyboard, "快捷键、开机启动和窗口行为。"},
+	{"关于", true, iconInfo, "版本、更新和反馈。"},
 }
 
 var (
@@ -100,21 +104,14 @@ func (a *app) settingsPanel(c *ui.Context) {
 		panel.Width(min(940, w-48)).Height(max(h-72, 320)).TextColor(ink.text).Label("设置").TransformOrigin(0, 1)
 		a.pane(panel, 26, false)
 		panel.Children(func() {
-			where := settingsCategories[a.settingsView.tab].label
-			if strings.TrimSpace(a.settingsView.query) != "" {
-				where = "搜索结果"
-			}
-			ui.Row(c).Height(68).Padding(0, 20, 0, 34).Gap(10).AlignItems(ui.Center).Children(func() {
-				ui.Text(c, "设置").FontSize(20).FontWeight(700)
-				ui.Text(c, "/").FontSize(15).TextColor(ink.faint)
-				ui.Text(c, where).FontSize(15).TextColor(ink.muted).Grow(1)
-				if iconButton(c.Key("close"), iconX, 16, ink.muted, "关闭").Clicked() {
-					a.settingsView.open = false
-				}
-			})
 			ui.Row(c).Grow(1).MinHeight(0).AlignItems(ui.Stretch).Children(func() {
 				a.settingsSidebar(c)
 				a.settingsBody(c)
+			})
+			ui.Box(c).Absolute().Top(16).Right(16).Children(func() {
+				if iconButton(c.Key("close"), iconX, 14, ink.muted, "关闭").Background(ink.hover).Clicked() {
+					a.settingsView.open = false
+				}
 			})
 		})
 	})
@@ -156,13 +153,17 @@ func (a *app) globalGlassDialog(c *ui.Context) {
 func (a *app) settingsSidebar(c *ui.Context) {
 	ink := a.inkOn(false)
 	searching := strings.TrimSpace(a.settingsView.query) != ""
-	ui.Column(c.Key("settings-nav")).Width(208).Shrink(0).Padding(2, 12, 16, 22).Gap(3).Label("设置分类").Children(func() {
-		field := ui.Row(c.Key("settings-search")).Height(36).PaddingX(12).Gap(8).Radius(999).AlignItems(ui.Center).
-			Background(ink.hover).Border(0.5, ink.line).Margin(0, 0, 10, 0)
+	line := ink.line
+	ui.Column(c.Key("settings-nav")).Width(224).Shrink(0).Padding(22, 12, 16, 14).Gap(2).Label("设置分类").Draw(func(p *ui.Painter, r ui.Rect) {
+		// A hairline between it and what it lists.
+		p.Fill(ui.Rect{X: r.X + r.W - 1, Y: r.Y + 20, W: 1, H: r.H - 40}, line, 0)
+	}).Children(func() {
+		field := ui.Row(c.Key("settings-search")).Height(34).PaddingX(10).Gap(8).Radius(8).AlignItems(ui.Center).
+			Background(ink.hover).Margin(0, 0, 12, 0)
 		field.Children(func() {
 			ui.Icon(c, iconSearch).Size(15, 15).Shrink(0).TextColor(ink.muted)
 			in := ui.TextInputBase(c.Key("settings-query"), &a.settingsView.query).Bind(&a.settingsView.searchBox).Grow(1).MinWidth(0).
-				FontSize(13).Label("搜索设置").Placeholder("搜索设置")
+				FontSize(13).Label("搜索设置").Placeholder("搜索")
 			if in.Changed() {
 				a.settingsView.searchScroll = ui.ScrollState{}
 			}
@@ -172,43 +173,60 @@ func (a *app) settingsSidebar(c *ui.Context) {
 				}
 			}
 		})
-		ui.Scroll(c.Key("settings-nav-list")).Grow(1).MinHeight(0).Gap(3).Margin(0, -6, 0, -6).Padding(0, 6).Children(func() { a.settingsNavItems(c, ink, searching) })
+		ui.Scroll(c.Key("settings-nav-list")).Grow(1).MinHeight(0).Gap(2).Margin(0, -6, 0, -6).Padding(0, 6).Children(func() { a.settingsNavItems(c, ink, searching) })
 	})
 }
 
-// settingsNavItems are the categories, under the names of their sections.
+// settingsNavItems are the categories: who listens first, as a card,
+// then the rest, each with its icon on a small square, the accent's
+// where it is the one chosen.
 func (a *app) settingsNavItems(c *ui.Context, ink paneInk, searching bool) {
 	for i, category := range settingsCategories {
-		if category.section != "" {
-			ui.Text(c, category.section).FontSize(11.5).FontWeight(600).TextColor(ink.faint).Margin(12, 0, 4, 14)
-		}
-		if settingsCategory(i) == settingsAbout {
-			ui.Box(c).Height(0.5).Background(ink.line).Margin(10, 10, 8, 10)
-		}
 		selected := a.settingsView.tab == settingsCategory(i) && !searching
-		button := ui.ButtonBase(c.Key(category.label)).Height(40).PaddingX(14).Gap(12).Radius(14).
-			AlignItems(ui.Center).Justify(ui.Start).Label("设置分类：" + category.label).Selected(selected)
-		bg, color, weight := ui.Transparent, ink.muted, 500
+		account := settingsCategory(i) == settingsAccount
+		button := ui.ButtonBase(c.Key(category.label)).Gap(10).AlignItems(ui.Center).Justify(ui.Start).
+			FocusRing(false).Label("设置分类：" + category.label).Selected(selected)
+		if account {
+			button.Padding(8, 10).Radius(14).Margin(0, 0, 12, 0)
+		} else {
+			button.Height(36).PaddingX(8).Radius(8)
+			if category.gap {
+				button.Margin(12, 0, 0, 0)
+			}
+		}
+		bg, weight := ui.Transparent, 400
 		if selected {
-			bg, color, weight = ink.hover, ink.text, 600
+			bg, weight = ink.press, 600
 		} else if button.Hovered() {
-			bg, color = ink.hover.Alpha(0.5), ink.text
+			bg = ink.hover.Alpha(0.6)
 		}
-		bar := float32(0)
-		if selected {
-			bar = 1
-		}
-		bar = button.AnimateTo("bar", bar, ui.Snappy)
-		accent := a.pal.accent
-		button.Background(button.AnimateColor("bg", bg, ui.Animation{Duration: 120 * time.Millisecond})).TextColor(color).
-			Draw(func(p *ui.Painter, r ui.Rect) {
-				if bar > 0.01 {
-					h := 14 * bar
-					p.Fill(ui.Rect{X: r.X, Y: r.Y + (r.H-h)/2, W: 3, H: h}, accent.Alpha(bar), 1.5)
-				}
-			})
+		// At once, as the page it names changes at once.
+		button.Background(bg).TextColor(ink.text)
 		button.Children(func() {
-			ui.Icon(c, category.icon).Size(18, 18)
+			if account {
+				name, sub := "未登录", "登录网易云账号"
+				if a.profile != nil {
+					name, sub = a.profile.Nickname, "网易云账号"
+					a.avatar(c, a.profile.AvatarURL, 42, ink.press)
+				} else {
+					ui.Box(c).Size(42, 42).Radius(999).Center().Shrink(0).Background(ink.press).Children(func() {
+						ui.Icon(c, iconUser).Size(20, 20).TextColor(ink.muted)
+					})
+				}
+				ui.Column(c).Grow(1).Shrink(1).MinWidth(0).Gap(2).Children(func() {
+					ui.Text(c, name).FontSize(15).FontWeight(600).SingleLine()
+					ui.Text(c, sub).FontSize(12).TextColor(ink.muted).SingleLine()
+				})
+				return
+			}
+			// One color in the whole list: the accent, on the one chosen.
+			tile, glyph := ink.hover, ink.muted
+			if selected {
+				tile, glyph = a.pal.accent, white
+			}
+			ui.Box(c).Size(24, 24).Radius(8).Center().Shrink(0).Background(tile).Children(func() {
+				ui.Icon(c, category.icon).Size(15, 15).TextColor(glyph)
+			})
 			ui.Text(c, category.label).FontSize(14).FontWeight(weight)
 		})
 		if button.Clicked() {
@@ -232,8 +250,13 @@ type settingsKit struct {
 	// title matched shows all its rows, query emptied.
 	searching bool
 	probe     bool // counting the rows that match, building nothing
-	hits      int  // rows that matched in a probe
-	rows      int  // rows on the card being built
+	// plain is the settings' own way with rows: a row is its name and
+	// its control, on one line; what more there is to say of it is said
+	// under its card (foot), or as the pointer rests on it, unless it
+	// is a caution, or says how things stand (settingRow.keep).
+	plain bool
+	hits  int // rows that matched in a probe
+	rows  int // rows on the card being built
 }
 
 // A settingRow is a row of a setting, as it says it.
@@ -243,6 +266,7 @@ type settingRow struct {
 	warn        bool   // its desc is a word of caution
 	badge       string // a word on a capsule beside its label, as 未开放
 	sub         bool   // it belongs to the row above it
+	keep        bool   // its desc says how things stand: shown whatever the kit
 }
 
 func (k *settingsKit) match(texts ...string) bool {
@@ -286,7 +310,11 @@ func (k *settingsKit) group(title string, rows func()) {
 	if k.query != "" && k.count(rows) == 0 {
 		return
 	}
-	ui.Text(k.c, title).FontSize(12.5).FontWeight(600).TextColor(k.ink.muted).Margin(18, 0, 8, 18)
+	top := float32(18)
+	if k.plain {
+		top = 24
+	}
+	ui.Text(k.c, title).FontSize(12.5).FontWeight(600).TextColor(k.ink.muted).Margin(top, 0, 8, 16)
 	k.card(rows)
 }
 
@@ -302,8 +330,29 @@ func (k *settingsKit) card(rows func()) {
 	n := k.rows
 	k.rows = 0
 	fill, edge := k.a.cardColors()
-	ui.Column(k.c).Radius(20).Background(fill).Border(0.5, edge).Children(rows)
+	card := ui.Column(k.c).Background(fill)
+	if k.plain {
+		card.Radius(14)
+	} else {
+		card.Radius(20).Border(0.5, edge)
+	}
+	card.Children(rows)
 	k.rows = n
+}
+
+// foot says under the card above it what its rows leave unsaid: a line
+// or two for all of them. Not while searching, where each row says its
+// own.
+func (k *settingsKit) foot(text string) {
+	if k.probe || k.searching || !k.plain {
+		return
+	}
+	ui.Text(k.c, text).FontSize(12).LineHeight(1.45).TextColor(k.ink.muted.Alpha(0.85)).Margin(8, 16, 0, 16)
+}
+
+// stateRow is a row whose desc says how things stand, not what it is.
+func (k *settingsKit) stateRow(label, desc string, control func()) {
+	k.rowOf(settingRow{label: label, desc: desc, keep: true}, control)
 }
 
 // row is a setting and its control.
@@ -336,6 +385,10 @@ func (k *settingsKit) rowOf(r settingRow, control func()) {
 	}
 	line := ink.line.Alpha(0.75)
 	sub := r.sub
+	if k.plain {
+		k.plainRow(r, first, control)
+		return
+	}
 	ui.Row(c).Padding(11, 20, 11, left).Gap(20).AlignItems(ui.Center).MinHeight(62).
 		Draw(func(p *ui.Painter, b ui.Rect) {
 			if !first {
@@ -367,6 +420,53 @@ func (k *settingsKit) rowOf(r settingRow, control func()) {
 					} else {
 						ui.Text(c, r.desc).FontSize(12.5).TextColor(ink.muted).LineHeight(1.4)
 					}
+				}
+			})
+			ui.Row(c).Gap(8).AlignItems(ui.Center).Shrink(0).Children(control)
+		})
+}
+
+// plainRow is a row as the settings have them: its name, and its
+// control at the end of the line; under its name what it has to say
+// only if that is a caution or how things stand, or while searching,
+// where it may be what was found.
+func (k *settingsKit) plainRow(r settingRow, first bool, control func()) {
+	c, ink := k.c, k.ink
+	line := ink.line.Alpha(0.75)
+	said := r.desc != "" && (r.warn || r.keep || k.searching)
+	ui.Row(c).Padding(6, 14, 6, 16).Gap(16).AlignItems(ui.Center).MinHeight(46).
+		Draw(func(p *ui.Painter, b ui.Rect) {
+			if !first {
+				p.Fill(ui.Rect{X: b.X + 16, Y: b.Y, W: b.W - 16, H: 1}, line, 0)
+			}
+		}).
+		Children(func() {
+			ui.Column(c).Grow(1).Shrink(1).MinWidth(0).Gap(3).Children(func() {
+				ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
+					label := ui.Text(c, r.label).FontSize(14).Shrink(1).MinWidth(0)
+					if r.sub {
+						label.TextColor(ink.muted)
+					}
+					// Said as the pointer rests on its name, not anywhere on
+					// the row.
+					if r.desc != "" && !said {
+						label.Tooltip(r.desc)
+					}
+					if r.badge != "" {
+						ui.Box(c).Height(20).PaddingX(8).Radius(999).Center().Shrink(0).Background(ink.hover).Children(func() {
+							ui.Text(c, r.badge).FontSize(11).FontWeight(600).TextColor(ink.muted)
+						})
+					}
+					if r.tip != "" {
+						infoTip(c, r.tip, ink)
+					}
+				})
+				if said {
+					color := ink.muted
+					if r.warn {
+						color = warnColor
+					}
+					ui.Text(c, r.desc).FontSize(12).TextColor(color).LineHeight(1.4)
 				}
 			})
 			ui.Row(c).Gap(8).AlignItems(ui.Center).Shrink(0).Children(control)
@@ -441,7 +541,7 @@ func (k *settingsKit) choose(key, label, chosen string, labels []string, pick fu
 
 // toggle is the switch of a setting, calling then as it changes.
 func (k *settingsKit) toggle(key, label string, on *bool, disabled bool, then func()) {
-	if ui.Switch(k.c.Key(key), on).Label(label).Disabled(disabled).Changed() {
+	if settingSwitch(k.c.Key(key), on).Label(label).Disabled(disabled).Changed() {
 		if then != nil {
 			then()
 		}
@@ -452,21 +552,29 @@ func (k *settingsKit) toggle(key, label string, on *bool, disabled bool, then fu
 // settingsBody shows one category, keeping its scroll position between
 // visits, or while the listener searches, what matches in all of them.
 func (a *app) settingsBody(c *ui.Context) {
-	k := &settingsKit{a: a, c: c, ink: a.inkOn(false), query: strings.ToLower(strings.TrimSpace(a.settingsView.query))}
+	k := &settingsKit{a: a, c: c, ink: a.inkOn(false), plain: true, query: strings.ToLower(strings.TrimSpace(a.settingsView.query))}
 	k.searching = k.query != ""
 	key, scroll, label := any(a.settingsView.tab), &a.settingsView.scroll[a.settingsView.tab], settingsCategories[a.settingsView.tab].label
 	if k.query != "" {
 		key, scroll, label = "search", &a.settingsView.searchScroll, "搜索"
 	}
-	viewport := ui.Box(c.Key("settings-viewport")).Grow(1).Shrink(1).MinWidth(0)
+	// Clear of the pane's round corners, above and below, where its
+	// scroll bar would stand out past them.
+	viewport := ui.Box(c.Key("settings-viewport")).Grow(1).Shrink(1).MinWidth(0).Margin(22, 0, 22, 0)
 	// Keep settings text on the final target. An edge Effect resamples the
 	// entire viewport, softening even the text well outside its fade band.
 	viewport.Children(func() {
-		ui.Scroll(c.Key(key)).Label(label+"设置项").TrackScroll(scroll).Fill().Padding(0, 30, 30, 18).Children(func() {
+		ui.Scroll(c.Key(key)).Label(label+"设置项").TrackScroll(scroll).Fill().Padding(4, 30, 12, 26).Children(func() {
 			if k.query == "" {
-				ui.Column(c.Key(a.settingsView.tab)).Margin(-12, 0, 0, 0).Children(func() { a.settingsPage(k, a.settingsView.tab) })
+				cat := settingsCategories[a.settingsView.tab]
+				ui.Column(c.Key(a.settingsView.tab)).Children(func() {
+					ui.Text(c, cat.label).FontSize(26).FontWeight(700).Margin(0, 40, 0, 4)
+					ui.Text(c, cat.blurb).FontSize(13).TextColor(k.ink.muted).Margin(6, 40, 0, 4)
+					a.settingsPage(k, a.settingsView.tab)
+				})
 				return
 			}
+			ui.Text(c, "搜索结果").FontSize(26).FontWeight(700).Margin(0, 40, 0, 4)
 			found := false
 			for cat := settingsCategory(0); cat < settingsCategoryCount; cat++ {
 				if k.count(func() { a.settingsPage(k, cat) }) == 0 {
@@ -474,9 +582,11 @@ func (a *app) settingsBody(c *ui.Context) {
 				}
 				found = true
 				ui.Column(c.Key(cat)).Children(func() {
-					ui.Row(c).Gap(8).AlignItems(ui.Center).Margin(16, 0, -6, 6).Children(func() {
-						ui.Icon(c, settingsCategories[cat].icon).Size(16, 16).TextColor(k.ink.muted)
-						ui.Text(c, settingsCategories[cat].label).FontSize(15).FontWeight(700)
+					ui.Row(c).Gap(8).AlignItems(ui.Center).Margin(22, 0, -10, 4).Children(func() {
+						ui.Box(c).Size(22, 22).Radius(8).Center().Shrink(0).Background(k.ink.hover).Children(func() {
+							ui.Icon(c, settingsCategories[cat].icon).Size(14, 14).TextColor(k.ink.muted)
+						})
+						ui.Text(c, settingsCategories[cat].label).FontSize(16).FontWeight(700)
 					})
 					a.settingsPage(k, cat)
 				})
@@ -498,19 +608,20 @@ func (a *app) settingsPage(k *settingsKit, category settingsCategory) {
 		a.settingsAccountPage(k)
 	case settingsPlayback:
 		a.settingsPlaybackPage(k)
-	case settingsLyrics:
-		a.settingsLyricsPage(k)
-	case settingsPodcast:
 		k.group("播客", func() {
 			a.podcastSpeedRow(k.c, k.row)
 			if a.captionsShown() {
 				a.captionSettings(k)
 			}
 		})
+	case settingsNowPlaying:
+		a.settingsNowPlayingPage(k)
+	case settingsLyrics:
+		a.settingsLyricsPage(k)
 	case settingsAppearance:
 		a.settingsAppearancePage(k)
-	case settingsEffects:
-		a.settingsEffectsPage(k)
+	case settingsHome:
+		a.settingsHomePage(k)
 	case settingsStorage:
 		a.settingsStoragePage(k)
 	case settingsSystem:
@@ -524,7 +635,7 @@ func (a *app) settingsAccountPage(k *settingsKit) {
 	c, ink, s := k.c, k.ink, &a.settings
 	k.group("网易云账号", func() {
 		if a.profile == nil {
-			k.row("未登录", "登录后，每日推荐与歌单将根据你的口味生成", func() {
+			k.stateRow("未登录", "登录后，每日推荐与歌单将根据你的口味生成", func() {
 				if ui.PrimaryButton(c.Key("login"), "扫码登录").Clicked() {
 					a.settingsView.open = false
 					a.openLogin()
@@ -553,12 +664,12 @@ func (a *app) settingsAccountPage(k *settingsKit) {
 			k.rowOf(settingRow{label: "计入网易云听歌记录", badge: "未开放", desc: "网易云目前不会计入第三方客户端发来的听歌记录，修好后再开放",
 				tip: "把听完或听满 30 秒的歌计入账号的听歌时长和排行"}, func() {
 				off := false
-				ui.Switch(c.Key("scrobble"), &off).Label("计入网易云听歌记录（未开放）").Disabled(true)
+				settingSwitch(c.Key("scrobble"), &off).Label("计入网易云听歌记录（未开放）").Disabled(true)
 			})
 			return
 		}
-		k.rowOf(settingRow{label: "计入网易云听歌记录", desc: "使用未公开的接口，有一定账号风险",
-			tip: "听完或听满 30 秒的歌会计入账号的听歌时长和排行；这是网易云未公开的接口，非官方客户端使用存在一定账号风险，默认关闭", warn: true}, func() {
+		k.rowOf(settingRow{label: "计入网易云听歌记录", desc: "以网易云 Mac 客户端的身份上报，理论上有账号风险，社区暂无封号案例",
+			tip: "听完或听满 30 秒的歌会计入最近播放、听歌排行和累计听歌，网易云几分钟后才显示。这是网易云未公开的接口，以官方 Mac 客户端的身份发送：理论上存在账号风险，目前社区里还没有因此被封号的案例；网易云也可能随时不再计入。默认关闭", warn: true}, func() {
 			k.toggle("scrobble", "计入网易云听歌记录", &s.Scrobble, a.profile == nil, nil)
 		})
 	})
@@ -610,17 +721,18 @@ func (a *app) settingsPlaybackPage(k *settingsKit) {
 		if s.Effects.On {
 			desc = "当前：" + a.presetLabel()
 		}
-		k.row("音效", desc, func() {
+		k.stateRow("音效", desc, func() {
 			if k.button("effects-open", "调节…", nil, false, false).Clicked() {
 				a.openEffects()
 			}
-			if ui.Switch(c.Key("effects-on"), &s.Effects.On).Label("开启音效").Changed() {
+			if settingSwitch(c.Key("effects-on"), &s.Effects.On).Label("开启音效").Changed() {
 				a.effectsChanged()
 			}
 		})
 		a.outputRow(c, k.row)
 	})
-	k.group("定时", func() { a.sleepRow(c, k.row) })
+	k.foot("无损与 Hi-Res 需要黑胶 VIP，换音质从下一首开始生效。音量均衡让每首歌听起来一样响；淡入淡出让前后两首衔接在一起。")
+	k.group("定时", func() { a.sleepRow(c, k.stateRow) })
 }
 
 // scaleChoices are sizes of lyrics, from small to large, in tenths.
@@ -640,107 +752,8 @@ func scaleLabel(v float64) string {
 	return fmt.Sprintf("%d%%", int(math.Round(v*10))*10)
 }
 
-func (a *app) settingsLyricsPage(k *settingsKit) {
-	s := &a.settings
-	k.group("播放页歌词", func() {
-		k.row("透视歌词", "当前句在画面中部高亮，上下歌词沿圆弧滚动", func() {
-			k.toggle("lyric-perspective", "透视歌词", &s.LyricPerspective, false, nil)
-		})
-		k.sub("倾斜度", "0% 为直上直下，50% 为原来的圆弧幅度", s.LyricPerspective, func() {
-			a.settingSlider(k.c.Key("lyric-tilt"), "倾斜度", &s.LyricTilt, s.LyricPerspective, k.ink)
-		})
-		k.sub("回弹强度", "调节切换到下一句时的回弹幅度，0% 为平滑滚动", s.LyricPerspective, func() {
-			a.settingSlider(k.c.Key("lyric-bounce"), "回弹强度", &s.LyricBounce, s.LyricPerspective, k.ink)
-		})
-		k.row("歌词翻译", "在歌词下方显示翻译；播放栏的翻译按钮也能切换", func() {
-			k.toggle("lyric-trans", "歌词翻译", &s.LyricTrans, false, nil)
-		})
-		k.row("热评模式", "歌词处换成这首歌的热门评论，一条接一条地轮换", func() {
-			// Turned on, it shows them all along; those who had them in
-			// the quiet parts only keep that.
-			k.toggle("hot-comments", "热评模式", &s.HotComments, false, func() { s.HotAll = s.HotComments })
-		})
-		k.sub("仅在间奏时显示热评", "只在前奏、间奏与尾奏时显示热评，有歌词的地方照常显示歌词", s.HotComments, func() {
-			quiet := !s.HotAll
-			k.toggle("hot-quiet", "仅在间奏时显示热评", &quiet, false, func() { s.HotAll = !quiet })
-		})
-		k.row("逐字高亮", "有逐字歌词的歌，唱到哪个字亮到哪个字；关闭后整行一起亮起", func() {
-			words := !s.NpWholeLines
-			k.toggle("np-words", "逐字高亮", &words, false, func() { s.NpWholeLines = !words })
-		})
-		k.row("隐藏制作信息", "不显示作词、作曲、编曲、制作人等行，播放页与桌面歌词都生效", func() {
-			k.toggle("hide-credits", "隐藏制作信息", &s.HideCredits, false, nil)
-		})
-		k.row("歌词字号", "播放页歌词的大小；鼠标移到播放页也能调", func() {
-			labels, values := scaleChoices(70, 160)
-			k.choose("lyric-scale", "歌词字号", scaleLabel(s.LyricScale), labels, func(i int) {
-				s.LyricScale = values[i]
-				a.changed()
-			})
-		})
-		k.row("默认显示律动", "打开播放页时显示随歌声跳动的律动歌词，而不是滚动歌词", func() {
-			k.toggle("lyrics-stage", "默认显示律动", &s.LyricsStage, false, func() {
-				if a.npPane == paneLyrics || a.npPane == paneStage {
-					a.npPane = paneLyrics
-					if s.LyricsStage {
-						a.npPane = paneStage
-					}
-				}
-			})
-		})
-		k.sub("律动效果", "律动歌词的排版与动画", s.LyricsStage, func() {
-			labels := make([]string, len(stageStyles))
-			chosen := stageStyles[0].label
-			for i, st := range stageStyles {
-				labels[i] = st.label
-				if st.id == s.StageStyle {
-					chosen = st.label
-				}
-			}
-			k.choose("stage-style", "律动效果", chosen, labels, func(i int) {
-				s.StageStyle = stageStyles[i].id
-				a.changed()
-			})
-		})
-		k.sub("火花", "唱到的字迸出火花", s.LyricsStage, func() {
-			k.toggle("stage-sparks", "火花", &s.StageSparks, false, nil)
-		})
-	})
-	k.group("桌面歌词", func() {
-		k.row("桌面歌词", "在其他窗口之上显示当前歌词", func() {
-			k.toggle("desk-lyrics", "桌面歌词", &s.DeskLyrics, false, a.applyDeskLyrics)
-		})
-		k.sub("样式", "也可以把鼠标移到歌词上点“样式”切换", s.DeskLyrics, func() {
-			labels := make([]string, len(deskStyles))
-			chosen := deskStyles[0].label
-			for i, d := range deskStyles {
-				labels[i] = d.label
-				if d.id == s.DeskStyle {
-					chosen = d.label
-				}
-			}
-			k.choose("desk-style", "桌面歌词样式", chosen, labels, func(i int) {
-				s.DeskStyle = deskStyles[i].id
-				a.changed()
-			})
-		})
-		k.sub("字号", "桌面歌词的大小", s.DeskLyrics, func() {
-			labels, values := scaleChoices(70, 130)
-			k.choose("desk-scale", "桌面歌词字号", scaleLabel(s.DeskScale), labels, func(i int) {
-				s.DeskScale = values[i]
-				a.changed()
-			})
-		})
-		k.sub("锁定", "锁定后鼠标会穿过歌词，不会挡住下面的内容", s.DeskLyrics, func() {
-			k.toggle("desk-lock", "锁定桌面歌词", &s.DeskLock, false, a.applyDeskLyrics)
-		})
-		k.sub("逐字高亮", "唱到哪个字亮到哪个字；关掉后当前这一行整行亮起", s.DeskLyrics, func() {
-			k.toggle("desk-words", "逐字高亮", &s.DeskWords, false, nil)
-		})
-	})
-}
-
-func (a *app) settingsAppearancePage(k *settingsKit) {
+// settingsThemeGroup chooses the theme and its colors.
+func (a *app) settingsThemeGroup(k *settingsKit) {
 	c, ink, s := k.c, k.ink, &a.settings
 	k.group("主题", func() {
 		k.row("外观", "浅色、深色，或跟着系统切换", func() {
@@ -770,8 +783,13 @@ func (a *app) settingsAppearancePage(k *settingsKit) {
 				if s.Accent == ac.hex {
 					dot.Border(2, ink.text)
 				} else {
-					dot.Border(1, ink.line)
+					dot.Border(0.5, ink.line)
 				}
+				pose := ui.Pose{}
+				if dot.Hovered() {
+					pose.Scale = 1.15
+				}
+				dot.AnimatePose(pose, ui.Snappy)
 				if dot.Clicked() {
 					s.Accent, s.AccentCover = ac.hex, false
 					a.changed()
@@ -804,7 +822,7 @@ func (a *app) settingsAppearancePage(k *settingsKit) {
 		})
 		k.row("跟随系统主题色", "使用 Windows 个性化里的主题色，系统换色时跟着变", func() {
 			on := s.Accent == accentSystem
-			if ui.Switch(k.c.Key("accent-system"), &on).Label("跟随系统主题色").Disabled(a.sysAccent == "" && !on).Changed() {
+			if settingSwitch(k.c.Key("accent-system"), &on).Label("跟随系统主题色").Disabled(a.sysAccent == "" && !on).Changed() {
 				s.Accent = ""
 				if on {
 					s.Accent, s.AccentCover = accentSystem, false
@@ -816,130 +834,7 @@ func (a *app) settingsAppearancePage(k *settingsKit) {
 			k.toggle("accent-cover", "主题色跟随封面", &s.AccentCover, false, nil)
 		})
 	})
-	k.group("文字与布局", func() {
-		k.row("界面缩放", "整个窗口的文字、图标与图片的大小；也可以按 Ctrl 加 + 或 - 调整，Ctrl 加 0 恢复", func() {
-			labels, values := scaleChoices(80, 200)
-			k.choose("ui-zoom", "界面缩放", scaleLabel(s.UIZoom), labels, func(i int) {
-				s.UIZoom = values[i]
-				if s.UIZoom == 1 {
-					s.UIZoom = 0
-				}
-				a.changed()
-			})
-		})
-		a.fontRows(c, k)
-		k.rowOf(settingRow{label: "侧边栏大小", desc: "歌单、专辑的封面和文字大小",
-			tip: "拖动侧边栏右边缘可以调整宽度，双击边缘恢复"}, func() {
-			labels := make([]string, len(sidebarSizes))
-			for i, sz := range sidebarSizes {
-				labels[i] = sz.label
-			}
-			k.choose("sidebar-size", "侧边栏大小", a.sidebarSizeLabel(), labels, func(i int) {
-				s.SidebarSize = sidebarSizes[i].id
-				a.changed()
-			})
-		})
-		k.row("侧边栏列出全部歌单", "关闭时每组只列出前 8 个，其余在「我的主页」里查看和搜索", func() {
-			k.toggle("sidebar-all", "侧边栏列出全部歌单", &s.SidebarAll, false, nil)
-		})
-	})
-}
-
-func (a *app) settingsEffectsPage(k *settingsKit) {
-	c, s := k.c, &a.settings
-	// Turning one of the effects that cost power on leaves the saver.
-	effect := func(key, label string, on *bool) {
-		k.toggle(key, label, on, false, a.leavePowerSaver)
-	}
-	slider := func(label, desc string, v *float64, on bool) {
-		k.sub(label, desc, on, func() { a.settingSlider(c.Key(label), label, v, true, k.ink) })
-	}
-	k.group("省电", func() {
-		k.row("省电模式", "一键关闭液态玻璃、封面旋转、微光和烟雾；再关一次恢复原样", func() {
-			on := s.PowerSaver
-			if ui.Switch(c.Key("power-saver"), &on).Label("省电模式").Changed() {
-				a.setPowerSaver(on)
-			}
-		})
-	})
-	k.group("液态玻璃", func() {
-		k.row("全局液态玻璃", "使用通透的封面色背景，悬浮播放栏、菜单和对话框采用折射玻璃", func() {
-			on := s.GlobalGlass
-			if ui.Switch(c.Key("global-glass"), &on).Label("切换全局液态玻璃").Changed() {
-				if on {
-					a.settingsView.confirmGlass = true
-				} else {
-					s.GlobalGlass = false
-					a.changed()
-				}
-			}
-		})
-		part := func(key, label string, stored *bool, after func()) {
-			if s.GlobalGlass {
-				on := true
-				k.toggle(key, label, &on, true, nil)
-				return
-			}
-			k.toggle(key, label, stored, false, after)
-		}
-		// The cover's colors take the place of the accent chosen: said, in a
-		// toast, as either is turned on.
-		coverOn := func(on *bool) func() {
-			return func() {
-				a.leavePowerSaver()
-				if *on && a.chosenAccent() != "" {
-					a.toast = "已改用封面色背景，所选主题色将不再显示"
-				}
-			}
-		}
-		k.row("侧栏封面色背景", "透出当前歌曲封面的颜色，不使用实时折射", func() {
-			part("sidebar-glass", "侧栏封面色背景", &s.SidebarGlass, coverOn(&s.SidebarGlass))
-		})
-		k.row("主界面封面色背景", "与侧栏共享连续的封面色背景", func() {
-			part("main-glass", "主界面封面色背景", &s.MainGlass, coverOn(&s.MainGlass))
-		})
-		k.row("液态玻璃播放栏", "播放栏化作悬浮的玻璃胶囊，透出并折射其下的内容", func() {
-			part("liquid-glass", "液态玻璃播放栏", &s.LiquidGlass, a.leavePowerSaver)
-		})
-		k.row("界面玻璃", "菜单（含托盘菜单）、弹窗和设置面板使用玻璃材质，内部卡片保持平面", func() {
-			part("glass-panels", "界面玻璃", &s.GlassPanels, a.leavePowerSaver)
-		})
-		refractive := s.playerGlass() || s.GlobalGlass
-		slider("玻璃透明度", "调节玻璃的通透程度", &s.GlassClear, refractive)
-		slider("折射强度", "调节玻璃边缘弯折应用内背景的程度", &s.GlassBend, refractive)
-	})
-	k.group("播放栏", func() {
-		k.row("封面旋转", "播放时胶囊里的封面像黑胶一样缓慢转动", func() {
-			effect("bar-spin", "播放栏封面旋转", &s.BarSpin)
-		})
-	})
-	k.group("播放页", func() {
-		k.row("微光", "当前歌词、进度条与音量带一层柔和的微光", func() {
-			effect("np-light", "播放页微光", &s.NpLight)
-		})
-		slider("微光强度", "", &s.GlowLevel, s.NpLight)
-		k.row("烟雾背景", "背景化作封面色调的烟雾，随低音起伏", func() {
-			effect("fog", "烟雾背景", &s.Fog)
-		})
-		k.row("进度条烟雾", "进度条化作拖着烟雾的光点，随音乐起伏", func() {
-			effect("smoke", "进度条烟雾特效", &s.Smoke)
-		})
-	})
-	k.group("界面", func() {
-		k.row("界面动画", "精简时只保留淡入淡出", func() {
-			modes := []string{"", "lite", "off"}
-			i := 0
-			for k, m := range modes {
-				if m == s.Motion {
-					i = k
-				}
-			}
-			if a.segmented(c.Key("motion"), &i, "完整", "精简", "关闭") {
-				s.Motion = modes[i]
-				a.changed()
-			}
-		})
-	})
+	k.foot("背景色决定窗口和侧栏的底色，按钮与高亮跟着它。跟随封面时，改用当前歌曲封面的颜色。")
 }
 
 func (a *app) settingsStoragePage(k *settingsKit) {
@@ -988,7 +883,7 @@ func (a *app) settingsStoragePage(k *settingsKit) {
 	})
 	k.group("本地音乐", func() {
 		for _, dir := range s.LocalFolders {
-			k.row(filepath.Base(dir), dir, func() {
+			k.stateRow(filepath.Base(dir), dir, func() {
 				if k.button("local-open-"+dir, "打开", iconExternal, false, false).Clicked() {
 					mygo.Shell.OpenPath(dir)
 				}
@@ -1018,7 +913,7 @@ func (a *app) settingsStoragePage(k *settingsKit) {
 		}
 	})
 	k.group("缓存", func() {
-		k.row("歌曲缓存", "听过的歌保存在本机，再听不用等也不耗流量；"+a.cacheUsage(), func() {
+		k.stateRow("歌曲缓存", "听过的歌保存在本机，再听不用等也不耗流量；"+a.cacheUsage(), func() {
 			labels := make([]string, len(cacheLimits))
 			chosen := cacheLimits[2].label
 			for i, l := range cacheLimits {
@@ -1076,7 +971,7 @@ func (a *app) settingsSystemPage(k *settingsKit) {
 		} else if a.keys.taken > 0 {
 			keys = fmt.Sprintf("有 %d 组被其他软件占用", a.keys.taken)
 		}
-		k.row("全局快捷键", keys, func() {
+		k.stateRow("全局快捷键", keys, func() {
 			if k.button("shortcut-custom", "自定义", nil, false, false).Clicked() {
 				a.openShortcutEditor()
 			}
@@ -1087,7 +982,7 @@ func (a *app) settingsSystemPage(k *settingsKit) {
 		login := a.openAtLogin()
 		k.row("开机时启动", "登录 Windows 后自动打开 Cloudy", func() {
 			on := login
-			if ui.Switch(k.c.Key("open-at-login"), &on).Label("开机时启动").Changed() {
+			if settingSwitch(k.c.Key("open-at-login"), &on).Label("开机时启动").Changed() {
 				a.setOpenAtLogin(on)
 			}
 		})
@@ -1134,15 +1029,15 @@ func (a *app) settingsAboutPage(k *settingsKit) {
 			if s.UpdateChecked > 0 {
 				desc += "；上次检查：" + commentTime(time.Unix(s.UpdateChecked, 0), time.Now())
 			}
-			k.row("提醒新版本", desc, func() {
+			k.stateRow("提醒新版本", desc, func() {
 				k.toggle("update-checks", "提醒新版本", &s.UpdateChecks, false, nil)
 			})
 			// Installing in the background goes with the checks,
 			// which find what it installs.
-			k.sub("自动安装更新", "在后台下载并装好新版本，不弹窗，下次打开软件时生效", s.UpdateChecks, func() {
+			k.sub("自动安装更新", "后台发现新版本时直接装好，下次打开软件时生效；手动检查仍会先问你", s.UpdateChecks, func() {
 				k.toggle("update-downloads", "自动安装更新", &s.UpdateInstall, false, nil)
 			})
-			k.row("当前版本 "+mygo.App.Version(), "新版本来自 GitHub 的 nya-owo/cloudy", func() {
+			k.stateRow("当前版本 "+mygo.App.Version(), "新版本来自 GitHub 的 nya-owo/cloudy", func() {
 				if k.button("check-updates", "检查更新", nil, false, false).Clicked() {
 					a.checkForUpdates()
 				}
@@ -1163,7 +1058,7 @@ func (a *app) settingSlider(c *ui.Context, label string, v *float64, on bool, in
 		opacity = 0.4
 	}
 	ui.Row(c).Gap(10).AlignItems(ui.Center).Opacity(opacity).Children(func() {
-		s := ui.SliderBase(c.Key("slider"), v, 0, 1).Width(150).Height(22).Step(0.01).FocusRing(false).Label(label).Disabled(!on).Cursor(ui.CursorPointer)
+		s := ui.SliderBase(c.Key("slider"), v, 0, 1).Width(200).Height(22).Step(0.01).FocusRing(false).Label(label).Disabled(!on).Cursor(ui.CursorPointer)
 		if s.Changed() {
 			a.settingsView.dirty = true
 			a.redraw()
@@ -1183,7 +1078,7 @@ func (a *app) settingSlider(c *ui.Context, label string, v *float64, on bool, in
 			y := r.Y + (r.H-thick)/2
 			p.Fill(ui.Rect{X: r.X, Y: y, W: r.W, H: thick}, ink.press, thick/2)
 			p.Fill(ui.Rect{X: r.X, Y: y, W: max(thick, r.W*at), H: thick}, accent, thick/2)
-			const knob = 16
+			const knob = 18
 			k := ui.Rect{X: r.X + (r.W-knob)*at, Y: r.Y + (r.H-knob)/2, W: knob, H: knob}
 			p.Shadow(k, knob/2, 0, 1, 4, 0, ui.RGBA(0, 0, 0, 0.3))
 			p.Fill(k, white, knob/2)

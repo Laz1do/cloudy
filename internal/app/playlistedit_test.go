@@ -320,3 +320,72 @@ func TestPlaylistEditFrames(t *testing.T) {
 		a.deleting.open = false
 	}
 }
+
+// The queue's ＋ opens the listener's playlists in a drawer within the
+// queue's pane, the liked songs first, and choosing one puts its songs on
+// the end of the queue, the song playing playing on and the pane staying
+// open; 清空待播 empties the whole queue, the song playing too.
+func TestQueueAddPlaylistAndClear(t *testing.T) {
+	a := editTestApp()
+	a.playlists[11] = &netease.Playlist{ID: 11, Name: "睡前", Tracks: []netease.Track{
+		{ID: 7, Name: "晚安", Duration: 200000}, {ID: 8, Name: "月光", Duration: 200000},
+	}}
+	a.pl.PlayQueue(a.playlists[10].Tracks, 0)
+	tt := ui.NewTester(a.view, 1200, 800)
+	tt.Advance(time.Second)
+	if err := tt.Click("播放列表"); err != nil {
+		t.Fatal(err)
+	}
+	tt.Advance(time.Second)
+	if err := tt.Click("添加歌单到播放列表"); err != nil {
+		t.Fatal(err)
+	}
+	tt.Advance(time.Second)
+	liked, ok1 := tt.Find("加入播放列表 我喜欢的音乐")
+	sleep, ok2 := tt.Find("加入播放列表 睡前")
+	if !ok1 || !ok2 || liked.Y > sleep.Y {
+		t.Fatalf("want the playlists, the liked songs first: %v %v", ok1, ok2)
+	}
+	if err := tt.Click("加入播放列表 睡前"); err != nil {
+		t.Fatal(err)
+	}
+	tt.Advance(time.Second)
+	q := a.pl.Queue()
+	if len(q) != 4 || q[2].ID != 7 || q[3].ID != 8 || a.pl.Current().ID != 1 {
+		t.Fatalf("queue %d, playing %v", len(q), a.pl.Current())
+	}
+	if !a.more.queue.open || a.queueAdding {
+		t.Errorf("queue open %v, drawer open %v", a.more.queue.open, a.queueAdding)
+	}
+	if err := tt.Click("清空待播"); err != nil {
+		t.Fatal(err)
+	}
+	tt.Advance(time.Second)
+	if len(a.pl.Queue()) != 0 || a.pl.Current() != nil || a.pl.Playing() {
+		t.Errorf("left %d songs, current %v", len(a.pl.Queue()), a.pl.Current())
+	}
+}
+
+// With nothing queued, the queue's pane lists the listener's playlists,
+// the liked songs first, and clicking one plays all its songs.
+func TestQueueEmptyPlaysAPlaylist(t *testing.T) {
+	a := editTestApp()
+	tt := ui.NewTester(a.view, 1200, 800)
+	tt.Advance(time.Second)
+	if err := tt.Click("播放列表"); err != nil {
+		t.Fatal(err)
+	}
+	tt.Advance(time.Second)
+	liked, ok1 := tt.Find("播放歌单 我喜欢的音乐")
+	commute, ok2 := tt.Find("播放歌单 通勤")
+	if !ok1 || !ok2 || liked.Y > commute.Y || !tt.HasText("从你的歌单开始播放") {
+		t.Fatalf("want the playlists, the liked songs first: %v %v", ok1, ok2)
+	}
+	if err := tt.Click("播放歌单 通勤"); err != nil {
+		t.Fatal(err)
+	}
+	tt.Advance(time.Second)
+	if cur := a.pl.Current(); cur == nil || cur.ID != 1 || len(a.pl.Queue()) != 2 {
+		t.Fatalf("playing %v of %d", cur, len(a.pl.Queue()))
+	}
+}

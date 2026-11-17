@@ -2,6 +2,7 @@ package app
 
 import (
 	"errors"
+	"fmt"
 	"slices"
 	"strings"
 
@@ -27,9 +28,10 @@ var (
 type nameDialog struct {
 	open   bool
 	name   string
-	rename int64          // the playlist renamed, or 0 to make one
-	add    *netease.Track // the song to add to the playlist made, if any
-	busy   bool           // NetEase is making the playlist
+	rename int64           // the playlist renamed, or 0 to make one
+	add    *netease.Track  // the song to add to the playlist made, if any
+	addAll []netease.Track // or the songs, as the queue's 全部加入歌单
+	busy   bool            // NetEase is making the playlist
 }
 
 // deleteDialog asks whether to delete one of the listener's playlists.
@@ -158,6 +160,15 @@ func (a *app) newPlaylist(tr *netease.Track) {
 	a.naming = nameDialog{open: true, add: tr}
 }
 
+// newPlaylistOf is newPlaylist for many songs: they are added to the
+// playlist made.
+func (a *app) newPlaylistOf(tracks []netease.Track) {
+	a.newPlaylist(nil)
+	if a.naming.open {
+		a.naming.addAll = tracks
+	}
+}
+
 // startRename asks for a new name for the listener's playlist pl.
 func (a *app) startRename(pl *netease.Playlist) {
 	a.naming = nameDialog{open: true, name: pl.Name, rename: pl.ID}
@@ -192,7 +203,7 @@ func (a *app) submitName() {
 		return
 	}
 	d.busy = true
-	add := d.add
+	add, addAll := d.add, d.addAll
 	go func() {
 		pl, err := createPlaylist(name)
 		a.post(func() {
@@ -213,6 +224,9 @@ func (a *app) submitName() {
 			a.open(route{page: pagePlaylist, id: pl.ID})
 			if add != nil {
 				a.addTo(pl.ID, add)
+			}
+			if len(addAll) > 0 {
+				a.addAllTo(pl.ID, addAll)
 			}
 		})
 	}()
@@ -286,6 +300,67 @@ func (a *app) addTo(pid int64, tr *netease.Track) {
 			}
 		})
 	}()
+}
+
+// addableSongs are those of tracks a playlist can hold, once each: songs
+// of NetEase, not episodes or files of the computer.
+func addableSongs(tracks []netease.Track) []int64 {
+	var ids []int64
+	seen := map[int64]bool{}
+	for _, t := range tracks {
+		if t.ID > 0 && t.ProgramID == 0 && !seen[t.ID] {
+			seen[t.ID] = true
+			ids = append(ids, t.ID)
+		}
+	}
+	return ids
+}
+
+// addAllTo adds tracks to the listener's playlist pid at once; a toast
+// says how it went.
+func (a *app) addAllTo(pid int64, tracks []netease.Track) {
+	ids := addableSongs(tracks)
+	if len(ids) == 0 {
+		a.toast = "没有可以加入歌单的歌曲"
+		return
+	}
+	go func() {
+		err := addToPlaylist(pid, ids...)
+		a.post(func() {
+			switch {
+			case errors.Is(err, netease.ErrInPlaylist):
+				a.toast = "这些歌曲已在歌单中"
+			case err != nil:
+				a.toast = "添加失败，请稍后再试"
+			default:
+				a.toast = fmt.Sprintf("已添加 %d 首到歌单", len(ids))
+				a.playlistChanged(pid)
+			}
+		})
+	}()
+}
+
+// addAllMenu opens, under b, the listener's playlists tracks can all be
+// added to, and 新建歌单; signed out, it asks the listener to sign in.
+func (a *app) addAllMenu(b ui.Element, onDark bool, tracks []netease.Track) {
+	if a.profile == nil {
+		a.toast = "登录后才能添加到歌单"
+		a.openLogin()
+		return
+	}
+	tracks = slices.Clone(tracks)
+	var to []menuAction
+	for i := range a.mine {
+		if pl := &a.mine[i]; pl.SpecialType != 5 {
+			id := pl.ID
+			to = append(to, menuAction{label: pl.Name, icon: iconNote, do: func() { a.addAllTo(id, tracks) }})
+		}
+	}
+	groups := [][]menuAction{{{label: "新建歌单…", icon: iconPlus, do: func() { a.newPlaylistOf(tracks) }}}}
+	if len(to) > 0 {
+		groups = append(groups, to)
+	}
+	a.menuBelow(b, onDark, groups, nil)
 }
 
 // removeFrom takes tr out of the listener's playlist pid, at once in the

@@ -200,6 +200,8 @@ func TestPrevGoesBackASong(t *testing.T) {
 func TestNowPlayingHoldsStillWithoutBadge(t *testing.T) {
 	a := newTestApp()
 	a.settings = defaultSettings()
+	// Left alone it calms, which folds the column on purpose.
+	a.settings.NpCalm = false
 	a.pl.Cue([]netease.Track{{ID: 1, Name: "一", Duration: 200000}})
 	a.pl.SetLyrics(nil)
 	a.nowPlaying = true

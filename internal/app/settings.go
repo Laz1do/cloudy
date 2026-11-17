@@ -26,6 +26,13 @@ type settings struct {
 	// NotchGreeted says the notch showed itself, once, as the first song
 	// played (greet).
 	NotchGreeted bool `json:"notchGreeted"`
+	// DeckHints is how many times the home page's calendar showed, by
+	// itself, that its pages flip; once the listener flips one, no more.
+	DeckHints int `json:"deckHints,omitempty"`
+	// DeckOrder is the order of the calendar's pages, by deckID, those not
+	// in it after; DeckOff the pages the listener took out of it.
+	DeckOrder []string `json:"deckOrder,omitempty"`
+	DeckOff   []string `json:"deckOff,omitempty"`
 	// Quality is the level of the streams: standard, higher, exhigh,
 	// lossless or hires.
 	Quality string `json:"quality"`
@@ -93,6 +100,17 @@ type settings struct {
 	LyricScale float64 `json:"lyricScale,omitempty"`
 	// LyricPerspective displays scrolling lyrics on an arc in Now Playing.
 	LyricPerspective bool `json:"lyricPerspective,omitempty"`
+	// LyricBlur blurs the lines of Now Playing's lyrics other than the one
+	// sung, the more the farther, as the perspective lyrics always did.
+	LyricBlur bool `json:"lyricBlur"`
+	// NpCalm fades Now Playing's controls while it is left alone.
+	NpCalm bool `json:"npCalm"`
+	// LyricBlurLevel is how strongly those lines blur, 0 to 1; 0.5 is as
+	// the perspective lyrics always blurred. Zero is meaningful.
+	LyricBlurLevel float64 `json:"lyricBlurLevel"`
+	// MoreWords looks for word-timed lyrics elsewhere (the AMLL TTML
+	// database, Kugou) for songs NetEase times only by line.
+	MoreWords bool `json:"moreWords"`
 	// Zero is meaningful for both sliders, so keep it when saving.
 	LyricTilt   float64 `json:"lyricTilt"`
 	LyricBounce float64 `json:"lyricBounce"`
@@ -126,6 +144,13 @@ type settings struct {
 	// MiniX and MiniY are where the mini window was left.
 	MiniX int `json:"miniX,omitempty"`
 	MiniY int `json:"miniY,omitempty"`
+	// MiniW and MiniH are how large the mini window was left, 0 for as it
+	// was at first.
+	MiniW int `json:"miniW,omitempty"`
+	MiniH int `json:"miniH,omitempty"`
+	// MiniDesk keeps the mini window down on the desktop, under the other
+	// windows, rather than over them.
+	MiniDesk bool `json:"miniDesk,omitempty"`
 	// Smoke makes the progress bars comets trailing smoke as music plays,
 	// for a few percent of a core: the listener turns it on.
 	Smoke bool `json:"smoke"`
@@ -157,6 +182,13 @@ type settings struct {
 	// rising and swelling with the bass: an experiment the listener turns
 	// on.
 	Fog bool `json:"fog"`
+	// FogStyle is the scene of that backdrop (backdropScenes): the fog
+	// itself when empty, "bokeh", "aurora" or "stars".
+	FogStyle string `json:"fogStyle,omitempty"`
+	// SceneCover are the scenes of the backdrop, by id, that paint in the
+	// cover's color in place of their own (sceneTints): a pool's
+	// blue-green, an aurora's green. Each is set by itself.
+	SceneCover map[string]bool `json:"sceneCover,omitempty"`
 	// AppIcon is where the app's icon shows on macOS (appIcons); elsewhere
 	// it is always in the notification area.
 	AppIcon string `json:"appIcon"`
@@ -222,7 +254,7 @@ type settings struct {
 }
 
 func defaultSettings() settings {
-	return settings{UpdateChecks: true, BarSpin: true, GlobalKeys: true, NotchActivity: true, Quality: "exhigh", Appearance: "system", LiquidGlass: true, SidebarGlass: true, MainGlass: true, NpLight: true, GlowLevel: 0.5, GlassClear: 0.6, GlassBend: 0.3, GlassPanels: true, Volume: 0.8, Normalize: true, AppIcon: "dock-and-menubar", CacheMB: 2048, Captions: true, LyricTrans: true, LyricTilt: 0.5, LyricBounce: 0.5, DeskWords: true}
+	return settings{UpdateChecks: true, BarSpin: true, GlobalKeys: true, NotchActivity: true, Quality: "exhigh", Appearance: "system", LiquidGlass: true, SidebarGlass: true, MainGlass: true, NpLight: true, GlowLevel: 0.5, GlassClear: 0.6, GlassBend: 0.3, GlassPanels: true, Volume: 0.8, Normalize: true, AppIcon: "dock-and-menubar", CacheMB: 2048, Captions: true, LyricTrans: true, LyricBlur: true, NpCalm: true, LyricBlurLevel: 0.5, MoreWords: true, LyricTilt: 0.5, LyricBounce: 0.5, DeskWords: true}
 }
 
 func (s settings) playerGlass() bool  { return !s.PowerSaver && (s.GlobalGlass || s.LiquidGlass) }

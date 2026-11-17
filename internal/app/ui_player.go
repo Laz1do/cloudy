@@ -28,6 +28,10 @@ type scrubState struct {
 
 func secs(s float64) time.Duration { return time.Duration(s * float64(time.Second)) }
 
+// scrubTouch is how far over and under a progress bar it can be taken
+// hold of.
+const scrubTouch = 6
+
 // scrubber shows how far the track is, and seeks where it is dragged or
 // clicked: the bar thickens under the pointer, and its knob shows. With a
 // smoke color, the bar is a comet while music plays: what has played is a
@@ -39,7 +43,10 @@ func (a *app) scrubber(c *ui.Context, st *scrubState, track, fill ui.Color, heig
 	if !st.active && !st.held {
 		st.v = pl.Position().Seconds()
 	}
-	s := ui.SliderBase(c, &st.v, 0, max(dur, 1)).Height(height).FocusRing(false).Label("播放进度").Cursor(ui.CursorPointer)
+	// It takes hold scrubTouch over and under what it takes up, for a
+	// finger on a touch screen: the thin bar was hard to catch.
+	s := ui.SliderBase(c, &st.v, 0, max(dur, 1)).Height(height+2*scrubTouch).Margin(-scrubTouch, 0, -scrubTouch, 0).
+		FocusRing(false).Label("播放进度").Cursor(ui.CursorPointer)
 	// The press and its release come to the bar wherever the pointer is,
 	// and go on to the slider, which follows the pointer.
 	s.HandleInput(func(ev ui.InputEvent) bool {
@@ -399,9 +406,12 @@ func (a *app) transport(c *ui.Context, color, dim, on ui.Color, size float32) {
 	a.transportRow(c, color, dim, on, size, false)
 }
 
-// transportRow keeps only previous/play/next in a compact bar. Its play
-// mode moves to the details menu instead of squeezing the song's title.
-func (a *app) transportRow(c *ui.Context, color, dim, on ui.Color, size float32, compact bool) {
+// transportRow keeps only previous/play/next in a bar too narrow for the
+// play mode (noMode): it moves to the details menu then, instead of
+// squeezing the song's title. A compact bar keeps it: listeners missed
+// 单曲循环 most of what a compact bar puts away.
+func (a *app) transportRow(c *ui.Context, color, dim, on ui.Color, size float32, noMode bool) {
+	compact := noMode
 	pl := a.pl
 	ui.Row(c).Gap(size * 0.5).AlignItems(ui.Center).Justify(ui.Center).Children(func() {
 		// One button goes through the modes, lit but in order.
@@ -448,6 +458,10 @@ func modeIcon(m player.PlayMode) *ui.SVG {
 	}
 	return iconOrder
 }
+
+// barNoModeWidth is the room in the player bar under which its play mode
+// button moves into the details menu.
+const barNoModeWidth = 620
 
 // The bar of glass floats as a capsule, its corners concentric with those of
 // the cover it holds, in the room the bar along the foot takes: pages don't
@@ -499,6 +513,8 @@ func (a *app) playerBar(c *ui.Context, foreground float32) {
 		available = ww - a.sideWidth(ww) - 2*glassBarSide - glassBarInset - 20
 	}
 	compact := available < 840
+	// The play mode goes into the menu only well under that.
+	noMode := available < barNoModeWidth
 	gap, songWidth := float32(20), min(float32(380), max(float32(300), available*0.32))
 	if compact {
 		gap, songWidth = 12, min(float32(280), max(float32(232), available*0.38))
@@ -513,7 +529,10 @@ func (a *app) playerBar(c *ui.Context, foreground float32) {
 		bar.Left(0).Right(0).Bottom(0).Height(playerBarHeight).PaddingX(20)
 	}
 	bar.Children(func() {
-		// What plays.
+		// What plays, in its own share of the bar. Its title comes before the
+		// heart's and the comments' counts: a compact bar keeps the counts in
+		// the buttons' tooltips.
+		counts := !compact
 		ui.Row(c.Key("song-info")).Width(songWidth).Shrink(0).Gap(4).AlignItems(ui.Center).Opacity(foreground).Children(func() {
 			if tr == nil {
 				ui.Row(c).Gap(12).AlignItems(ui.Center).Children(func() {
@@ -548,7 +567,8 @@ func (a *app) playerBar(c *ui.Context, foreground float32) {
 					}
 				})
 				ui.Column(c).Grow(1).MinWidth(0).Gap(3).Children(func() {
-					title := ui.Text(c.Key(tr.ID), tr.Name).FontSize(13.5).FontWeight(600).SingleLine().Label("播放栏歌名").Tooltip(tr.Name).
+					line, title := a.marqueeLine(c.Key(tr.ID), "bar-title", tr.Name, 13.5, 600, 0)
+					line.Label("播放栏歌名").Tooltip(tr.Name).
 						Transition(ui.ElementTransition{Animation: &motionPane, Enter: &ui.Motion{Y: 10}, Exit: &ui.Motion{Y: -10}})
 					a.barSpot.title = title.LayoutBounds()
 					a.lifted(title)
@@ -573,14 +593,14 @@ func (a *app) playerBar(c *ui.Context, foreground float32) {
 			if info.Clicked() {
 				a.nowPlaying = true
 			}
-			a.countedHeart(c.Key("like"), tr, 16, muted, !compact).Shrink(0)
-			a.barCommentButton(c.Key("comment-count"), tr, 16, muted, !compact).Shrink(0)
+			a.countedHeart(c.Key("like"), tr, 16, muted, counts).Shrink(0)
+			a.barCommentButton(c.Key("comment-count"), tr, 16, muted, counts).Shrink(0)
 		})
 
 		// Controls over the progress.
 		ui.Column(c.Key("transport")).Grow(1).MinWidth(120).Gap(0).AlignItems(ui.Stretch).Opacity(foreground).Children(func() {
 			a.playFlies = a.lifted
-			a.transportRow(c, p.text, muted, p.accent, 18, compact)
+			a.transportRow(c, p.text, muted, p.accent, 18, noMode)
 			a.playFlies = nil
 			a.barSpot.play = a.playSpot
 			if tr == nil {
